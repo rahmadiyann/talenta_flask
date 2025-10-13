@@ -23,7 +23,6 @@ wheels/
 *.egg
 .venv/
 # Configuration
-config_local.py
 .env
 
 # IDE
