@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  talenta-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: talenta-scheduler
+    image: talenta-api:latest
+    restart: unless-stopped
+    environment:
+      # Override these in .env file or docker-compose.override.yml
+      - EMAIL=${EMAIL:-}
+      - PASSWORD=${PASSWORD:-}
+      - COOKIES_TALENTA=${COOKIES_TALENTA:-}
+      - LATITUDE=${LATITUDE:--6.000}
+      - LONGITUDE=${LONGITUDE:-107.000}
+      - TIME_CLOCK_IN=${TIME_CLOCK_IN:-09:00}
+      - TIME_CLOCK_OUT=${TIME_CLOCK_OUT:-17:00}
+      - TZ=${TZ:-Asia/Jakarta}
+    volumes:
+      # Mount config file if you prefer file-based config
+      - ./config_local.py:/app/config_local.py:ro
+    command: scheduler
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # One-time clock in service (use with docker-compose run)
+  talenta-clockin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: talenta-api:latest
+    environment:
+      - EMAIL=${EMAIL:-}
+      - PASSWORD=${PASSWORD:-}
+      - COOKIES_TALENTA=${COOKIES_TALENTA:-}
+      - LATITUDE=${LATITUDE:--6.000}
+      - LONGITUDE=${LONGITUDE:-107.000}
+      - TZ=${TZ:-Asia/Jakarta}
+    volumes:
+      - ./config_local.py:/app/config_local.py:ro
+    command: clockin
+    profiles:
+      - manual
+
+  # One-time clock out service (use with docker-compose run)
+  talenta-clockout:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: talenta-api:latest
+    environment:
+      - EMAIL=${EMAIL:-}
+      - PASSWORD=${PASSWORD:-}
+      - COOKIES_TALENTA=${COOKIES_TALENTA:-}
+      - LATITUDE=${LATITUDE:--6.000}
+      - LONGITUDE=${LONGITUDE:-107.000}
+      - TZ=${TZ:-Asia/Jakarta}
+    volumes:
+      - ./config_local.py:/app/config_local.py:ro
+    command: clockout
+    profiles:
+      - manual
