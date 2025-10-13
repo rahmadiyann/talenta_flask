@@ -16,6 +16,7 @@ LONGITUDE = '${LONGITUDE:-107.000}'
 LATITUDE = '${LATITUDE:--6.000}'
 TIME_CLOCK_IN = '${TIME_CLOCK_IN:-09:00}'
 TIME_CLOCK_OUT = '${TIME_CLOCK_OUT:-17:00}'
+TIMEZONE = '${TZ:-}'
 EOF
     echo "✅ Configuration created"
 fi

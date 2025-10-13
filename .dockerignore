@@ -13,7 +13,6 @@ dist/
 .eggs/
 
 # Configuration (will be mounted as volume)
-config_local.py
 .env
 
 # Git
