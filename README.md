@@ -68,23 +68,20 @@ This will:
 2. Install dependencies
 3. Create a `config_local.py` file
 
-### Manual Setup (using uv)
+### Manual Setup
 
 ```bash
-# Install uv (if not already installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Create virtual environment with uv
-uv venv venv
+# Create virtual environment
+python3 -m venv venv
 
 # Activate virtual environment
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install dependencies with uv (much faster than pip!)
-uv pip install -r requirements.txt
+# Upgrade pip
+pip install --upgrade pip
 
-# Or install directly from pyproject.toml
-uv sync
+# Install dependencies
+pip install -r requirements.txt
 
 # Copy configuration file
 cp config.py config_local.py
@@ -414,6 +411,7 @@ print(loc)  # {'latitude': '...', 'longitude': '...'}
 | Encoding           | Manual ROT13   | `codecs.encode()`    |
 | Scheduling         | `node-cron`    | `schedule`           |
 | Process Management | PM2            | systemd/screen       |
+| Package Manager    | npm            | pip                  |
 | Configuration      | `config.js`    | `config.py`          |
 | Session Management | Manual         | `requests.Session()` |
 
@@ -425,11 +423,11 @@ print(loc)  # {'latitude': '...', 'longitude': '...'}
 # Make sure virtual environment is activated
 source venv/bin/activate
 
-# Reinstall dependencies with uv
-uv pip install -r requirements.txt
+# Reinstall dependencies
+pip install -r requirements.txt
 
-# Or sync from pyproject.toml
-uv sync
+# Or install from pyproject.toml
+pip install -e .
 ```
 
 ### Authentication Failed

@@ -1,8 +1,7 @@
 #!/bin/bash
 # Setup script for Talenta API Python version
-# Uses uv for fast package management
 
-echo "🚀 Setting up Talenta API (Python with uv)..."
+echo "🚀 Setting up Talenta API (Python)..."
 echo ""
 
 # Check Python version
@@ -16,29 +15,18 @@ fi
 
 echo ""
 
-# Check if uv is installed
-if ! command -v uv &> /dev/null; then
-    echo "📦 uv not found. Installing uv..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-
-    # Add uv to PATH for current session
-    export PATH="$HOME/.cargo/bin:$PATH"
-
-    if ! command -v uv &> /dev/null; then
-        echo "❌ Failed to install uv. Please install manually: https://github.com/astral-sh/uv"
-        exit 1
-    fi
-
-    echo "✅ uv installed successfully"
-else
-    echo "✅ uv is already installed ($(uv --version))"
+# Check if pip is installed
+if ! command -v pip3 &> /dev/null; then
+    echo "❌ pip3 not found. Please install pip."
+    exit 1
 fi
 
+echo "✅ pip is available ($(pip3 --version))"
 echo ""
 
-# Create virtual environment with uv
-echo "Creating virtual environment with uv..."
-uv venv venv
+# Create virtual environment
+echo "Creating virtual environment..."
+python3 -m venv venv
 
 if [ $? -ne 0 ]; then
     echo "❌ Failed to create virtual environment."
@@ -52,9 +40,13 @@ echo ""
 echo "Activating virtual environment..."
 source venv/bin/activate
 
-# Install dependencies with uv
-echo "Installing dependencies with uv..."
-uv pip install -r requirements.txt
+# Upgrade pip
+echo "Upgrading pip..."
+pip install --upgrade pip
+
+# Install dependencies with pip
+echo "Installing dependencies..."
+pip install -r requirements.txt
 
 if [ $? -ne 0 ]; then
     echo "❌ Failed to install dependencies."
