@@ -6,13 +6,12 @@ Usage: python execute.py clockin|clockout
 
 import sys
 import json
-import talenta_api
-import location
-try:
-    import config_local as config_local
-except ImportError:
-    import talenta_flask.config_local as config_local
+from src.api import talenta
+from src.core import location
+from src.core.logger import setup_logger
+from src.config import config_local
 
+logger = setup_logger("talenta_executor")
 
 def get_cookies():
     """
@@ -26,12 +25,12 @@ def get_cookies():
     """
     # Check if email and password are provided for automatic authentication
     if config_local.EMAIL and config_local.PASSWORD:
-        print('🔐 Using automatic authentication with email/password...')
+        logger.info('🔐 Using automatic authentication with email/password...')
         try:
-            return talenta_api.fetch_cookies(config_local.EMAIL, config_local.PASSWORD)
+            return talenta.fetch_cookies(config_local.EMAIL, config_local.PASSWORD)
         except Exception as error:
-            print(f'⚠️  Automatic authentication failed: {error}')
-            print('🔄 Falling back to manual cookies...')
+            logger.warning(f'⚠️  Automatic authentication failed: {error}')
+            logger.warning('🔄 Falling back to manual cookies...')
 
             if not config_local.COOKIES_TALENTA or config_local.COOKIES_TALENTA == 'PHPSESSID=<value>':
                 raise Exception(
@@ -48,20 +47,20 @@ def get_cookies():
             'Check config.py for examples.'
         )
 
-    print('🍪 Using manual cookie authentication...')
+    logger.info('🍪 Using manual cookie authentication...')
     return config_local.COOKIES_TALENTA
 
 
 def main():
     """Main execution function"""
     if len(sys.argv) < 2:
-        print("Usage: python execute.py clockin|clockout")
+        logger.info("Usage: python execute.py clockin|clockout")
         sys.exit(1)
 
     action = sys.argv[1].lower()
 
     if action not in ['clockin', 'clockout']:
-        print("Error: Action must be 'clockin' or 'clockout'")
+        logger.error("Error: Action must be 'clockin' or 'clockout'")
         sys.exit(1)
 
     try:
@@ -77,16 +76,16 @@ def main():
 
         # Execute the requested action
         if action == 'clockin':
-            print('⏰ Clocking in...')
-            result = talenta_api.clock_in(
+            logger.info('⏰ Clocking in...')
+            result = talenta.clock_in(
                 lat=loc['latitude'],
                 long=loc['longitude'],
                 cookies=cookies,
                 desc="Hello I am In"
             )
         else:  # clockout
-            print('⏰ Clocking out...')
-            result = talenta_api.clock_out(
+            logger.info('⏰ Clocking out...')
+            result = talenta.clock_out(
                 lat=loc['latitude'],
                 long=loc['longitude'],
                 cookies=cookies,
@@ -94,14 +93,14 @@ def main():
             )
 
         # Display result
-        print('\n✅ Success!')
+        logger.info('\n✅ Success!')
         if isinstance(result, dict):
-            print(json.dumps(result, indent=2))
+            logger.info(json.dumps(result, indent=2))
         else:
-            print(result)
+            logger.info(result)
 
     except Exception as error:
-        print(f'\n❌ Error: {error}')
+        logger.error(f'\n❌ Error: {error}')
         sys.exit(1)
 
 

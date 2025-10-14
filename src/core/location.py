@@ -5,7 +5,9 @@ Uses IP-based geolocation with fallback to configured coordinates
 
 import requests
 from typing import Dict, Optional
+from src.core.logger import setup_logger
 
+logger = setup_logger("talenta_location_setup")
 
 def detect_location() -> Dict[str, str]:
     """
@@ -18,7 +20,7 @@ def detect_location() -> Dict[str, str]:
         Exception: If location detection fails
     """
     try:
-        print('🌍 Detecting your location...')
+        logger.info('🌍 Detecting your location...')
 
         # Use ip-api.com for free IP geolocation (no API key required)
         url = 'https://ip-api.com/json/?fields=lat,lon,city,country,status,message'
@@ -40,7 +42,7 @@ def detect_location() -> Dict[str, str]:
         city = result.get('city', 'Unknown')
         country = result.get('country', 'Unknown')
 
-        print(f"✅ Location detected: {lat}, {lon} ({city}, {country})")
+        logger.info(f"✅ Location detected: {lat}, {lon} ({city}, {country})")
 
         return {
             'latitude': str(lat),
@@ -52,7 +54,7 @@ def detect_location() -> Dict[str, str]:
     except requests.exceptions.RequestException as error:
         raise Exception(f'Network request failed: {error}')
     except Exception as error:
-        print(f"⚠️  Location detection failed: {error}")
+        logger.error(f"⚠️  Location detection failed: {error}")
         raise
 
 
@@ -76,7 +78,7 @@ def get_location(config: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     except Exception as error:
         # Fallback to config values
         if config and config.get('latitude') and config.get('longitude'):
-            print('📍 Using configured location as fallback')
+            logger.info('📍 Using configured location as fallback')
             return {
                 'latitude': config['latitude'],
                 'longitude': config['longitude']
@@ -89,6 +91,6 @@ if __name__ == '__main__':
     # Example usage
     try:
         location = get_location()
-        print(f"Location: {location}")
+        logger.info(f"Location: {location}")
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"Error: {e}")

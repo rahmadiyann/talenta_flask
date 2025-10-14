@@ -20,10 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Make scripts executable
-RUN chmod +x entrypoint.sh execute.py scheduler.py
+RUN chmod +x scripts/entrypoint.sh src/cli/execute.py src/cli/scheduler.py
 
 # Set entrypoint
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["./scripts/entrypoint.sh"]
 
 # Default command (scheduler)
 CMD ["scheduler"]

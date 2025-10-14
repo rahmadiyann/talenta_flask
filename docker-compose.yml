@@ -20,7 +20,7 @@ services:
       - TZ=${TZ:-Asia/Jakarta}
     volumes:
       # Mount config file if you prefer file-based config
-      - ./config_local.py:/app/config_local.py:ro
+      - ./src/config/config_local.py:/app/src/config/config_local.py:ro
     command: scheduler
     logging:
       driver: "json-file"
@@ -42,7 +42,7 @@ services:
       - LONGITUDE=${LONGITUDE:-107.000}
       - TZ=${TZ:-Asia/Jakarta}
     volumes:
-      - ./config_local.py:/app/config_local.py:ro
+      - ./src/config/config_local.py:/app/src/config/config_local.py:ro
     command: clockin
     profiles:
       - manual
@@ -61,7 +61,7 @@ services:
       - LONGITUDE=${LONGITUDE:-107.000}
       - TZ=${TZ:-Asia/Jakarta}
     volumes:
-      - ./config_local.py:/app/config_local.py:ro
+      - ./src/config/config_local.py:/app/src/config/config_local.py:ro
     command: clockout
     profiles:
       - manual

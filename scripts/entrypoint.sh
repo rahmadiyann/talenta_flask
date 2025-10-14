@@ -4,9 +4,9 @@
 set -e
 
 # Create config from environment variables if config_local.py doesn't exist
-if [ ! -f "config_local.py" ]; then
+if [ ! -f "src/config/config_local.py" ]; then
     echo "Creating config from environment variables..."
-    cat > config_local.py <<EOF
+    cat > src/config/config_local.py <<EOF
 # Auto-generated configuration from environment variables
 
 EMAIL = '${EMAIL:-}'
@@ -25,15 +25,15 @@ fi
 case "$1" in
     scheduler)
         echo "🕐 Starting scheduler..."
-        exec python3 scheduler.py
+        exec python3 -m src.cli.scheduler
         ;;
     clockin)
         echo "⏰ Clocking in..."
-        exec python3 execute.py clockin
+        exec python3 -m src.cli.execute clockin
         ;;
     clockout)
         echo "⏰ Clocking out..."
-        exec python3 execute.py clockout
+        exec python3 -m src.cli.execute clockout
         ;;
     bash|sh)
         echo "🐚 Starting shell..."

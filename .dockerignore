@@ -44,4 +44,4 @@ Thumbs.db
 *.log
 
 # Misc
-setup.sh
+scripts/setup.sh

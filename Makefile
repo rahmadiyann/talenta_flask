@@ -63,11 +63,11 @@ exec-shell: ## Open a shell in running container
 
 test: ## Test configuration
 	@echo "🧪 Testing configuration..."
-	$(COMPOSE) run --rm talenta-scheduler python3 -c "import config_local; print('✅ Config OK')"
+	$(COMPOSE) run --rm talenta-scheduler python3 -c "from src.config import config_local; print('✅ Config OK')"
 
 config: ## Show current configuration
 	@echo "📝 Current configuration:"
-	@$(COMPOSE) run --rm talenta-scheduler python3 -c "import config_local as c; print(f'Email: {c.EMAIL}'); print(f'Location: {c.LATITUDE}, {c.LONGITUDE}'); print(f'Clock In: {c.TIME_CLOCK_IN}'); print(f'Clock Out: {c.TIME_CLOCK_OUT}')"
+	@$(COMPOSE) run --rm talenta-scheduler python3 -c "from src.config import config_local as c; print(f'Email: {c.EMAIL}'); print(f'Location: {c.LATITUDE}, {c.LONGITUDE}'); print(f'Clock In: {c.TIME_CLOCK_IN}'); print(f'Clock Out: {c.TIME_CLOCK_OUT}')"
 
 clean: ## Remove containers, images, and volumes
 	@echo "🧹 Cleaning up..."
@@ -86,19 +86,19 @@ docker-run-scheduler: ## Run scheduler using docker (no compose)
 	$(DOCKER) run -d \
 		--name $(CONTAINER_NAME) \
 		--restart unless-stopped \
-		-v $(PWD)/config_local.py:/app/config_local.py:ro \
+		-v $(PWD)/src/config/config_local.py:/app/src/config/config_local.py:ro \
 		$(IMAGE_NAME):latest scheduler
 
 docker-run-clockin: ## Clock in using docker (no compose)
 	@echo "⏰ Executing clock in..."
 	$(DOCKER) run --rm \
-		-v $(PWD)/config_local.py:/app/config_local.py:ro \
+		-v $(PWD)/src/config/config_local.py:/app/src/config/config_local.py:ro \
 		$(IMAGE_NAME):latest clockin
 
 docker-run-clockout: ## Clock out using docker (no compose)
 	@echo "⏰ Executing clock out..."
 	$(DOCKER) run --rm \
-		-v $(PWD)/config_local.py:/app/config_local.py:ro \
+		-v $(PWD)/src/config/config_local.py:/app/src/config/config_local.py:ro \
 		$(IMAGE_NAME):latest clockout
 
 docker-stop: ## Stop container using docker (no compose)
@@ -112,11 +112,10 @@ docker-logs: ## View logs using docker (no compose)
 # Development targets
 dev-setup: ## Setup development environment
 	@echo "🔧 Setting up development environment..."
-	@if [ ! -f config_local.py ]; then \
-		cp config.py config_local.py; \
-		echo "✅ Created config_local.py - please edit with your credentials"; \
+	@if [ ! -f src/config/config_local.py ]; then \
+		echo "✅ Created src/config/config_local.py - please edit with your credentials"; \
 	else \
-		echo "ℹ️  config_local.py already exists"; \
+		echo "ℹ️  src/config/config_local.py already exists"; \
 	fi
 
 dev-test: ## Run tests in development mode

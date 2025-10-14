@@ -57,21 +57,20 @@ echo "✅ Dependencies installed"
 echo ""
 
 # Copy config template if not exists
-if [ ! -f "config_local.py" ]; then
-    echo "Creating config_local.py from template..."
-    cp config.py config_local.py
-    echo "✅ Please edit config_local.py and add your credentials"
+if [ ! -f "src/config/config_local.py" ]; then
+    echo "Creating src/config/config_local.py..."
+    echo "✅ Please edit src/config/config_local.py and add your credentials"
 else
-    echo "ℹ️  config_local.py already exists, skipping..."
+    echo "ℹ️  src/config/config_local.py already exists, skipping..."
 fi
 
 echo ""
 echo "✅ Setup complete!"
 echo ""
 echo "Next steps:"
-echo "1. Edit config_local.py and add your credentials"
+echo "1. Edit src/config/config_local.py and add your credentials"
 echo "2. Activate the virtual environment: source venv/bin/activate"
-echo "3. Run clock in: python execute.py clockin"
-echo "4. Run clock out: python execute.py clockout"
-echo "5. Run scheduler: python scheduler.py"
+echo "3. Run clock in: python -m src.cli.execute clockin"
+echo "4. Run clock out: python -m src.cli.execute clockout"
+echo "5. Run scheduler: python -m src.cli.scheduler"
 echo ""

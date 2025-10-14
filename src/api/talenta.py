@@ -8,8 +8,10 @@ import codecs
 import re
 import requests
 from typing import Dict, Optional, Any
-from lib.auth_helpers import extract_authenticity_token, extract_cookies
+from src.core.auth import extract_authenticity_token, extract_cookies
+from src.core.logger import setup_logger
 
+logger = setup_logger("talenta_api")
 
 def rot13(text: str) -> str:
     """
@@ -85,7 +87,7 @@ def get_csrf_token(cookies: str) -> Optional[str]:
         return None
 
     except Exception as error:
-        print(f"⚠️  Could not fetch CSRF token: {error}")
+        logger.error(f"⚠️  Could not fetch CSRF token: {error}")
         return None
 
 
@@ -235,7 +237,7 @@ def fetch_cookies(email: str, password: str) -> str:
 
     try:
         # Step 1: Get login page and extract authenticity token
-        print('🔐 Starting authentication process...')
+        logger.info('🔐 Starting authentication process...')
 
         login_page_url = 'https://account.mekari.com/users/sign_in?app_referer=Talenta'
         login_page_response = session.get(
@@ -255,10 +257,10 @@ def fetch_cookies(email: str, password: str) -> str:
         if not authenticity_token:
             raise Exception('Could not extract authenticity token from login page')
 
-        print('✅ Successfully extracted authenticity token')
+        logger.info('✅ Successfully extracted authenticity token')
 
         # Step 2: Submit login form
-        print('🔑 Submitting login credentials...')
+        logger.info('🔑 Submitting login credentials...')
 
         login_data = {
             'utf8': '✓',
@@ -295,10 +297,10 @@ def fetch_cookies(email: str, password: str) -> str:
                 raise Exception('Invalid email or password')
             raise Exception(f"Login failed: {login_response.status_code} {login_response.reason}")
 
-        print('✅ Login successful')
+        logger.info('✅ Login successful')
 
         # Step 3: Get authorization code
-        print('🔗 Getting authorization code...')
+        logger.info('🔗 Getting authorization code...')
 
         auth_url = 'https://account.mekari.com/auth?client_id=TAL-73645&response_type=code&scope=sso:profile'
         auth_response = session.get(
@@ -326,10 +328,10 @@ def fetch_cookies(email: str, password: str) -> str:
         if not location_header or 'hr.talenta.co/sso-callback' not in location_header:
             raise Exception('Invalid authorization redirect')
 
-        print('✅ Authorization successful')
+        logger.info('✅ Authorization successful')
 
         # Step 4: Follow redirect to get final cookies
-        print('🍪 Getting final session cookies...')
+        logger.info('🍪 Getting final session cookies...')
 
         final_response = session.get(
             location_header,
@@ -354,7 +356,7 @@ def fetch_cookies(email: str, password: str) -> str:
         if not cookies_dict:
             raise Exception('Failed to get session cookies from Talenta')
 
-        print('✅ Successfully obtained session cookies')
+        logger.info('✅ Successfully obtained session cookies')
 
         # Extract PHPSESSID or _identity cookie specifically
         if 'PHPSESSID' in cookies_dict:
@@ -367,11 +369,11 @@ def fetch_cookies(email: str, password: str) -> str:
         return cookie_string
 
     except Exception as error:
-        print(f'❌ Cookie fetching failed: {error}')
+        logger.error(f'❌ Cookie fetching failed: {error}')
         raise
 
 
 if __name__ == '__main__':
     # Example usage
-    print("Talenta API Module - Python Implementation")
-    print("Import this module to use clock_in(), clock_out(), and fetch_cookies()")
+    logger.info("Talenta API Module - Python Implementation")
+    logger.info("Import this module to use clock_in(), clock_out(), and fetch_cookies()")
