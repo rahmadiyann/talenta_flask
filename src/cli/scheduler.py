@@ -9,6 +9,7 @@ import os
 import time
 import schedule
 import json
+import random
 from datetime import datetime
 
 # Import timezone handling (zoneinfo for Python 3.9+, fallback to pytz)
@@ -133,6 +134,94 @@ def clock_in_job(loc, cookies):
                 return
 
 
+def generate_random_clock_in_time():
+    """
+    Generate random clock-in time
+    Hour: 8 AM (08:00)
+    Minutes: Random between 40-59
+
+    Returns:
+        str: Time in HH:MM format (e.g., "08:47")
+    """
+    hour = 8
+    minute = random.randint(40, 59)
+    return f"{hour:02d}:{minute:02d}"
+
+
+def generate_random_clock_out_time():
+    """
+    Generate random clock-out time
+    Hour: 6 PM (18:00)
+    Minutes: Random between 00-59
+
+    Returns:
+        str: Time in HH:MM format (e.g., "18:23")
+    """
+    hour = 18
+    minute = random.randint(0, 59)
+    return f"{hour:02d}:{minute:02d}"
+
+
+def schedule_jobs_with_random_times(loc, cookies):
+    """
+    Schedule clock-in and clock-out jobs with randomized times
+    Called at startup and daily at midnight to reschedule with new random times
+    """
+    # Clear existing jobs to reschedule with new times
+    schedule.clear()
+
+    # Generate random times for today
+    clock_in_time = generate_random_clock_in_time()
+    clock_out_time = generate_random_clock_out_time()
+
+    # Log the scheduled times
+    current_time = datetime.now(TIMEZONE)
+    logger.info(f"🎲 Scheduling jobs with randomized times:")
+    logger.info(f"   Date: {current_time.strftime('%Y-%m-%d')}")
+    logger.info(f"   Clock in:  {clock_in_time} (randomized between 08:40-08:59)")
+    logger.info(f"   Clock out: {clock_out_time} (randomized between 18:00-18:59)")
+    logger.info("")
+
+    # Schedule clock-in jobs for weekdays only (Monday-Friday)
+    schedule.every().monday.at(clock_in_time).do(
+        lambda: clock_in_job(loc, cookies)
+    )
+    schedule.every().tuesday.at(clock_in_time).do(
+        lambda: clock_in_job(loc, cookies)
+    )
+    schedule.every().wednesday.at(clock_in_time).do(
+        lambda: clock_in_job(loc, cookies)
+    )
+    schedule.every().thursday.at(clock_in_time).do(
+        lambda: clock_in_job(loc, cookies)
+    )
+    schedule.every().friday.at(clock_in_time).do(
+        lambda: clock_in_job(loc, cookies)
+    )
+
+    # Schedule clock-out jobs for weekdays only (Monday-Friday)
+    schedule.every().monday.at(clock_out_time).do(
+        lambda: clock_out_job(loc, cookies)
+    )
+    schedule.every().tuesday.at(clock_out_time).do(
+        lambda: clock_out_job(loc, cookies)
+    )
+    schedule.every().wednesday.at(clock_out_time).do(
+        lambda: clock_out_job(loc, cookies)
+    )
+    schedule.every().thursday.at(clock_out_time).do(
+        lambda: clock_out_job(loc, cookies)
+    )
+    schedule.every().friday.at(clock_out_time).do(
+        lambda: clock_out_job(loc, cookies)
+    )
+
+    # Schedule daily job at midnight to reschedule with new random times
+    schedule.every().day.at("00:00").do(
+        lambda: schedule_jobs_with_random_times(loc, cookies)
+    )
+
+
 def clock_out_job(loc, cookies):
     """Job function for clocking out"""
     max_retries = 3
@@ -195,21 +284,16 @@ def main():
     if hasattr(time, 'tzset'):
         time.tzset()
 
-    # Validate configuration
-    if not config_local.TIME_CLOCK_IN or not config_local.TIME_CLOCK_OUT:
-        logger.error("✖︎ Error: TIME_CLOCK_IN and TIME_CLOCK_OUT must be defined in config.py")
-        return
-
     # Get current time in Asia/Jakarta timezone
     current_time = datetime.now(TIMEZONE)
     current_day = current_time.strftime('%A')
 
-    logger.info(f"🕐 Starting scheduler...")
+    logger.info(f"🕐 Starting scheduler with randomized times...")
     logger.info(f"   Timezone: {config_local.TIMEZONE} (GMT+7)")
     logger.info(f"   Current time: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     logger.info(f"   Current day: {current_day}")
-    logger.info(f"   Clock in scheduled for:  {config_local.TIME_CLOCK_IN} (Mon-Fri)")
-    logger.info(f"   Clock out scheduled for: {config_local.TIME_CLOCK_OUT} (Mon-Fri)")
+    logger.info(f"   Clock in:  Randomized between 08:40-08:59 (Mon-Fri)")
+    logger.info(f"   Clock out: Randomized between 18:00-18:59 (Mon-Fri)")
     logger.info("")
 
     try:
@@ -226,42 +310,11 @@ def main():
         logger.info('✅ Authentication configured successfully')
         logger.info("")
 
-        # Schedule jobs for weekdays only (Monday-Friday)
-        # Clock In
-        schedule.every().monday.at(config_local.TIME_CLOCK_IN).do(
-            lambda: clock_in_job(loc, cookies)
-        )
-        schedule.every().tuesday.at(config_local.TIME_CLOCK_IN).do(
-            lambda: clock_in_job(loc, cookies)
-        )
-        schedule.every().wednesday.at(config_local.TIME_CLOCK_IN).do(
-            lambda: clock_in_job(loc, cookies)
-        )
-        schedule.every().thursday.at(config_local.TIME_CLOCK_IN).do(
-            lambda: clock_in_job(loc, cookies)
-        )
-        schedule.every().friday.at(config_local.TIME_CLOCK_IN).do(
-            lambda: clock_in_job(loc, cookies)
-        )
-
-        # Clock Out
-        schedule.every().monday.at(config_local.TIME_CLOCK_OUT).do(
-            lambda: clock_out_job(loc, cookies)
-        )
-        schedule.every().tuesday.at(config_local.TIME_CLOCK_OUT).do(
-            lambda: clock_out_job(loc, cookies)
-        )
-        schedule.every().wednesday.at(config_local.TIME_CLOCK_OUT).do(
-            lambda: clock_out_job(loc, cookies)
-        )
-        schedule.every().thursday.at(config_local.TIME_CLOCK_OUT).do(
-            lambda: clock_out_job(loc, cookies)
-        )
-        schedule.every().friday.at(config_local.TIME_CLOCK_OUT).do(
-            lambda: clock_out_job(loc, cookies)
-        )
+        # Schedule jobs with random times
+        schedule_jobs_with_random_times(loc, cookies)
 
         logger.info("✅ Scheduler started successfully!")
+        logger.info("   Jobs will be rescheduled daily at midnight with new random times")
         logger.info("   Press Ctrl+C to stop")
         logger.info("")
 
