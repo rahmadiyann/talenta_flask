@@ -322,12 +322,50 @@ The web server starts automatically with the scheduler on port 5000, providing R
   }
   ```
 
+- **`POST /clockin`** - Trigger manual clock in
+
+  Example:
+
+  ```bash
+  curl -X POST http://localhost:5000/clockin
+  ```
+
+  Response:
+
+  ```json
+  {
+  	"success": true,
+  	"message": "Clock in successful",
+  	"result": { "status": 200, "message": "Success" }
+  }
+  ```
+
+- **`POST /clockout`** - Trigger manual clock out
+
+  Example:
+
+  ```bash
+  curl -X POST http://localhost:5000/clockout
+  ```
+
+  Response:
+
+  ```json
+  {
+  	"success": true,
+  	"message": "Clock out successful",
+  	"result": { "status": 200, "message": "Success" }
+  }
+  ```
+
 **Use Cases:**
 
 - Temporarily disable automation when on vacation
+- Manually trigger clock in/out via API without running the CLI
 - Integrate with home automation systems
 - Control via mobile apps or scripts
 - Remote management from anywhere
+- Trigger attendance from external systems or workflows
 
 **Docker Access:**
 
@@ -363,11 +401,17 @@ make up
 # View logs (live)
 make logs
 
-# Manual clock in
+# Manual clock in (via Docker)
 make clockin
 
-# Manual clock out
+# Manual clock out (via Docker)
 make clockout
+
+# Manual clock in (via API)
+make api-clockin
+
+# Manual clock out (via API)
+make api-clockout
 
 # Stop the scheduler
 make down
@@ -386,6 +430,14 @@ make config
 
 # Clean everything (containers, images, volumes)
 make clean
+
+# Railway deployment commands
+make railway-health      # Check Railway deployment health
+make railway-status      # Check automation status
+make railway-clockin     # Trigger clock in on Railway
+make railway-clockout    # Trigger clock out on Railway
+make railway-enable      # Enable automation on Railway
+make railway-disable     # Disable automation on Railway
 ```
 
 #### Using Docker Compose Directly

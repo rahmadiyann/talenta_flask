@@ -6,6 +6,51 @@ import re
 from typing import Optional, Dict
 
 
+def get_cookies():
+    """
+    Get authentication cookies (automatic or manual)
+
+    Returns:
+        Cookie string
+
+    Raises:
+        Exception: If authentication fails
+    """
+    # Import here to avoid circular dependency
+    from src.api import talenta
+    from src.config import config_local
+    from src.core.logger import get_logger
+
+    logger = get_logger('talenta_auth')
+
+    # Check if email and password are provided for automatic authentication
+    if config_local.EMAIL and config_local.PASSWORD:
+        logger.info('🔐 Using automatic authentication with email/password...')
+        try:
+            return talenta.fetch_cookies(config_local.EMAIL, config_local.PASSWORD)
+        except Exception as error:
+            logger.warning(f'⚠️  Automatic authentication failed: {error}')
+            logger.info('🔄 Falling back to manual cookies...')
+
+            if not config_local.COOKIES_TALENTA or config_local.COOKIES_TALENTA == 'PHPSESSID=<value>':
+                raise Exception(
+                    'Manual cookies not configured. Please set either EMAIL/PASSWORD or COOKIES_TALENTA in config.py'
+                )
+            return config_local.COOKIES_TALENTA
+
+    # Fallback to manual cookies
+    if not config_local.COOKIES_TALENTA or config_local.COOKIES_TALENTA == 'PHPSESSID=<value>':
+        raise Exception(
+            'Authentication not configured. Please set either:\n'
+            '1. EMAIL and PASSWORD for automatic authentication, OR\n'
+            '2. COOKIES_TALENTA for manual cookie authentication\n'
+            'Check config.py for examples.'
+        )
+
+    logger.info('🍪 Using manual cookie authentication...')
+    return config_local.COOKIES_TALENTA
+
+
 def extract_authenticity_token(html: str) -> Optional[str]:
     """
     Extract authenticity token from login page HTML

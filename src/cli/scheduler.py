@@ -33,7 +33,7 @@ except ImportError:
 from src.api import talenta
 from src.api.talenta import get_attendance_status
 from src.api.server import app, get_automation_state
-from src.core import location
+from src.core import auth, location
 from src.core.logger import setup_logger
 from src.core.telegram import send_telegram_message
 from src.config import config_local
@@ -60,44 +60,6 @@ def start_flask_server():
         app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as error:
         logger.error(f'❌ Flask server error: {error}')
-
-def get_cookies():
-    """
-    Get authentication cookies (automatic or manual)
-
-    Returns:
-        Cookie string
-
-    Raises:
-        Exception: If authentication fails
-    """
-    # Check if email and password are provided for automatic authentication
-    if config_local.EMAIL and config_local.PASSWORD:
-        logger.info('🔐 Using automatic authentication with email/password...')
-        try:
-            return talenta.fetch_cookies(config_local.EMAIL, config_local.PASSWORD)
-        except Exception as error:
-            logger.warning(f'⚠️  Automatic authentication failed: {error}')
-            logger.info('🔄 Falling back to manual cookies...')
-
-            if not config_local.COOKIES_TALENTA or config_local.COOKIES_TALENTA == 'PHPSESSID=<value>':
-                raise Exception(
-                    'Manual cookies not configured. Please set either EMAIL/PASSWORD or COOKIES_TALENTA in config.py'
-                )
-            return config_local.COOKIES_TALENTA
-
-    # Fallback to manual cookies
-    if not config_local.COOKIES_TALENTA or config_local.COOKIES_TALENTA == 'PHPSESSID=<value>':
-        raise Exception(
-            'Authentication not configured. Please set either:\n'
-            '1. EMAIL and PASSWORD for automatic authentication, OR\n'
-            '2. COOKIES_TALENTA for manual cookie authentication\n'
-            'Check config.py for examples.'
-        )
-
-    logger.info('🍪 Using manual cookie authentication...')
-    return config_local.COOKIES_TALENTA
-
 
 def clock_in_job(loc, cookies):
     """Job function for clocking in"""
@@ -181,7 +143,7 @@ def clock_in_job(loc, cookies):
                 logger.warning(f'⚠️  Clock in failed with 401 Unauthorized')
                 logger.info('🔐 Refreshing authentication cookies...')
                 try:
-                    current_cookies = get_cookies()
+                    current_cookies = auth.get_cookies()
                     logger.info('✅ Cookies refreshed successfully')
                     attempt += 1
                     continue  # Retry with new cookies
@@ -364,7 +326,7 @@ def clock_out_job(loc, cookies):
                 logger.warning(f'⚠️  Clock out failed with 401 Unauthorized')
                 logger.info('🔐 Refreshing authentication cookies...')
                 try:
-                    current_cookies = get_cookies()
+                    current_cookies = auth.get_cookies()
                     logger.info('✅ Cookies refreshed successfully')
                     attempt += 1
                     continue  # Retry with new cookies
@@ -405,8 +367,8 @@ def main():
         loc = location.get_location(config_dict)
         logger.info(f"📍 Using location: {loc['latitude']}, {loc['longitude']}")
 
-        # Get cookies once at startup
-        cookies = get_cookies()
+        # Get cookies once at startup using shared auth function
+        cookies = auth.get_cookies()
         logger.info('✅ Authentication configured successfully')
         logger.info("")
 

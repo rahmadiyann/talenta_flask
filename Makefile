@@ -1,6 +1,6 @@
 # Makefile for Talenta API Docker
 
-.PHONY: help build up down restart logs clean clockin clockout shell test config api-enable api-disable api-status api-health api-test
+.PHONY: help build up down restart logs clean clockin clockout shell test config api-enable api-disable api-status api-health api-clockin api-clockout api-test railway-health railway-status railway-clockin railway-clockout railway-enable railway-disable
 
 # Variables
 IMAGE_NAME := talenta-api
@@ -91,6 +91,39 @@ api-health: ## Check web API health
 	@echo "🏥 Checking API health..."
 	@curl http://localhost:5000/health -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
 
+api-clockin: ## Trigger manual clock in via API
+	@echo "⏰ Triggering clock in via API..."
+	@curl -X POST http://localhost:5000/clockin -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
+
+api-clockout: ## Trigger manual clock out via API
+	@echo "⏰ Triggering clock out via API..."
+	@curl -X POST http://localhost:5000/clockout -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
+
+# Railway deployment testing
+railway-health: ## Check Railway deployment health
+	@echo "🏥 Checking Railway deployment health..."
+	@curl http://localhost:5000/health -s | python3 -m json.tool || echo "❌ Failed to connect"
+
+railway-status: ## Check Railway deployment status
+	@echo "📊 Checking Railway deployment status..."
+	@curl http://localhost:5000/status -s | python3 -m json.tool || echo "❌ Failed to connect"
+
+railway-clockin: ## Trigger clock in on Railway deployment
+	@echo "⏰ Triggering clock in on Railway..."
+	@curl -X POST http://localhost:5000/clockin -s | python3 -m json.tool || echo "❌ Failed to connect"
+
+railway-clockout: ## Trigger clock out on Railway deployment
+	@echo "⏰ Triggering clock out on Railway..."
+	@curl -X POST http://localhost:5000/clockout -s | python3 -m json.tool || echo "❌ Failed to connect"
+
+railway-enable: ## Enable automation on Railway deployment
+	@echo "✅ Enabling automation on Railway..."
+	@curl -X POST http://localhost:5000/enable -s | python3 -m json.tool || echo "❌ Failed to connect"
+
+railway-disable: ## Disable automation on Railway deployment
+	@echo "⏸️  Disabling automation on Railway..."
+	@curl -X POST http://localhost:5000/disable -s | python3 -m json.tool || echo "❌ Failed to connect"
+
 api-test: ## Test all web API endpoints
 	@echo "🧪 Testing web API endpoints..."
 	@echo ""
@@ -111,6 +144,12 @@ api-test: ## Test all web API endpoints
 	@echo ""
 	@echo "6. Check Status (should be enabled):"
 	@curl http://localhost:5000/status -s | python3 -m json.tool || echo "❌ Failed"
+	@echo ""
+	@echo "7. Manual Clock In:"
+	@curl -X POST http://localhost:5000/clockin -s | python3 -m json.tool || echo "❌ Failed"
+	@echo ""
+	@echo "8. Manual Clock Out:"
+	@curl -X POST http://localhost:5000/clockout -s | python3 -m json.tool || echo "❌ Failed"
 	@echo ""
 	@echo "✅ API test complete"
 

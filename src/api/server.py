@@ -6,10 +6,12 @@ of the Talenta automation system. The server manages the automation state
 in-memory and provides endpoints to enable, disable, and check the status.
 
 Available Endpoints:
-    POST /enable  - Enable the automation (allow scheduled jobs to execute)
-    POST /disable - Disable the automation (prevent scheduled jobs from executing)
-    GET  /status  - Check the current automation state
-    GET  /health  - Health check endpoint for container monitoring
+    POST /enable   - Enable the automation (allow scheduled jobs to execute)
+    POST /disable  - Disable the automation (prevent scheduled jobs from executing)
+    GET  /status   - Check the current automation state
+    GET  /health   - Health check endpoint for container monitoring
+    POST /clockin  - Trigger manual clock in
+    POST /clockout - Trigger manual clock out
 
 State Management:
     The automation state is stored in-memory using a global dictionary.
@@ -31,6 +33,12 @@ Usage Example:
     # Health check
     curl http://localhost:5000/health
 
+    # Manual clock in
+    curl -X POST http://localhost:5000/clockin
+
+    # Manual clock out
+    curl -X POST http://localhost:5000/clockout
+
 Note:
     This module can be run independently for testing purposes without
     starting the scheduler.
@@ -38,6 +46,8 @@ Note:
 
 from flask import Flask, request, jsonify
 from src.core.logger import get_logger
+from src.core import auth, location
+from src.config import config_local
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -143,6 +153,102 @@ def health_check():
     }), 200
 
 
+@app.route('/clockin', methods=['POST'])
+def manual_clockin():
+    """
+    Trigger manual clock in via API.
+
+    Returns:
+        JSON response with clock in result
+    """
+    try:
+        from src.api import talenta
+
+        logger.info("⏰ Manual clock in triggered via API")
+
+        # Get authentication cookies using shared function
+        cookies = auth.get_cookies()
+
+        # Get location using shared function
+        config_dict = {
+            'latitude': config_local.LATITUDE,
+            'longitude': config_local.LONGITUDE
+        }
+        loc = location.get_location(config_dict)
+
+        # Perform clock in
+        result = talenta.clock_in(
+            lat=loc['latitude'],
+            long=loc['longitude'],
+            cookies=cookies,
+            desc="clock in via API"
+        )
+
+        logger.info("✅ Manual clock in successful")
+
+        return jsonify({
+            'success': True,
+            'message': 'Clock in successful',
+            'result': result
+        }), 200
+
+    except Exception as error:
+        logger.error(f"❌ Manual clock in failed: {error}")
+        return jsonify({
+            'success': False,
+            'error': str(error),
+            'message': 'Clock in failed'
+        }), 500
+
+
+@app.route('/clockout', methods=['POST'])
+def manual_clockout():
+    """
+    Trigger manual clock out via API.
+
+    Returns:
+        JSON response with clock out result
+    """
+    try:
+        from src.api import talenta
+
+        logger.info("⏰ Manual clock out triggered via API")
+
+        # Get authentication cookies using shared function
+        cookies = auth.get_cookies()
+
+        # Get location using shared function
+        config_dict = {
+            'latitude': config_local.LATITUDE,
+            'longitude': config_local.LONGITUDE
+        }
+        loc = location.get_location(config_dict)
+
+        # Perform clock out
+        result = talenta.clock_out(
+            lat=loc['latitude'],
+            long=loc['longitude'],
+            cookies=cookies,
+            desc="clock out via API"
+        )
+
+        logger.info("✅ Manual clock out successful")
+
+        return jsonify({
+            'success': True,
+            'message': 'Clock out successful',
+            'result': result
+        }), 200
+
+    except Exception as error:
+        logger.error(f"❌ Manual clock out failed: {error}")
+        return jsonify({
+            'success': False,
+            'error': str(error),
+            'message': 'Clock out failed'
+        }), 500
+
+
 @app.errorhandler(Exception)
 def handle_error(error):
     """
@@ -170,10 +276,12 @@ if __name__ == '__main__':
     """
     logger.info("🚀 Starting Talenta automation control server...")
     logger.info("Available endpoints:")
-    logger.info("  POST /enable  - Enable the automation")
-    logger.info("  POST /disable - Disable the automation")
-    logger.info("  GET  /status  - Check automation status")
-    logger.info("  GET  /health  - Health check")
+    logger.info("  POST /enable   - Enable the automation")
+    logger.info("  POST /disable  - Disable the automation")
+    logger.info("  GET  /status   - Check automation status")
+    logger.info("  GET  /health   - Health check")
+    logger.info("  POST /clockin  - Trigger manual clock in")
+    logger.info("  POST /clockout - Trigger manual clock out")
 
     app.run(
         host='0.0.0.0',
