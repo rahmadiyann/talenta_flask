@@ -35,3 +35,7 @@ TIME_CLOCK_OUT = os.getenv('TIME_CLOCK_OUT', '17:00')
 
 # Timezone setting
 TIMEZONE = os.getenv('TZ', 'Asia/Jakarta')
+
+# Telegram notification settings
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')

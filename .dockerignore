@@ -12,6 +12,9 @@ dist/
 *.egg-info/
 .eggs/
 
+# Old pip requirements (using pyproject.toml now)
+requirements.txt
+
 # Configuration (will be mounted as volume)
 .env
 

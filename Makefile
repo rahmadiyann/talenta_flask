@@ -1,6 +1,6 @@
 # Makefile for Talenta API Docker
 
-.PHONY: help build up down restart logs clean clockin clockout shell test config
+.PHONY: help build up down restart logs clean clockin clockout shell test config api-enable api-disable api-status api-health api-test
 
 # Variables
 IMAGE_NAME := talenta-api
@@ -24,6 +24,11 @@ build: ## Build the Docker image
 	$(COMPOSE) build
 
 up: ## Start the scheduler in background
+	@echo "🚀 Starting scheduler..."
+	$(COMPOSE) up talenta-scheduler
+	@echo "✅ Scheduler started! Use 'make logs' to view output"
+
+up-d: ## Start the scheduler in background
 	@echo "🚀 Starting scheduler..."
 	$(COMPOSE) up -d talenta-scheduler
 	@echo "✅ Scheduler started! Use 'make logs' to view output"
@@ -69,6 +74,46 @@ config: ## Show current configuration
 	@echo "📝 Current configuration:"
 	@$(COMPOSE) run --rm talenta-scheduler python3 -c "from src.config import config_local as c; print(f'Email: {c.EMAIL}'); print(f'Location: {c.LATITUDE}, {c.LONGITUDE}'); print(f'Clock In: {c.TIME_CLOCK_IN}'); print(f'Clock Out: {c.TIME_CLOCK_OUT}')"
 
+# Web API control commands
+api-enable: ## Enable automation via web API
+	@echo "✅ Enabling automation..."
+	@curl -X POST http://localhost:5000/enable -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
+
+api-disable: ## Disable automation via web API
+	@echo "⏸️  Disabling automation..."
+	@curl -X POST http://localhost:5000/disable -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
+
+api-status: ## Check automation status via web API
+	@echo "📊 Checking automation status..."
+	@curl http://localhost:5000/status -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
+
+api-health: ## Check web API health
+	@echo "🏥 Checking API health..."
+	@curl http://localhost:5000/health -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
+
+api-test: ## Test all web API endpoints
+	@echo "🧪 Testing web API endpoints..."
+	@echo ""
+	@echo "1. Health Check:"
+	@curl http://localhost:5000/health -s | python3 -m json.tool || echo "❌ Failed"
+	@echo ""
+	@echo "2. Current Status:"
+	@curl http://localhost:5000/status -s | python3 -m json.tool || echo "❌ Failed"
+	@echo ""
+	@echo "3. Disable Automation:"
+	@curl -X POST http://localhost:5000/disable -s | python3 -m json.tool || echo "❌ Failed"
+	@echo ""
+	@echo "4. Check Status (should be disabled):"
+	@curl http://localhost:5000/status -s | python3 -m json.tool || echo "❌ Failed"
+	@echo ""
+	@echo "5. Enable Automation:"
+	@curl -X POST http://localhost:5000/enable -s | python3 -m json.tool || echo "❌ Failed"
+	@echo ""
+	@echo "6. Check Status (should be enabled):"
+	@curl http://localhost:5000/status -s | python3 -m json.tool || echo "❌ Failed"
+	@echo ""
+	@echo "✅ API test complete"
+
 clean: ## Remove containers, images, and volumes
 	@echo "🧹 Cleaning up..."
 	$(COMPOSE) down -v --rmi all --remove-orphans
@@ -110,13 +155,26 @@ docker-logs: ## View logs using docker (no compose)
 	$(DOCKER) logs -f $(CONTAINER_NAME)
 
 # Development targets
-dev-setup: ## Setup development environment
+dev-setup: ## Setup development environment with uv
 	@echo "🔧 Setting up development environment..."
-	@if [ ! -f src/config/config_local.py ]; then \
-		echo "✅ Created src/config/config_local.py - please edit with your credentials"; \
-	else \
-		echo "ℹ️  src/config/config_local.py already exists"; \
-	fi
+	@chmod +x scripts/setup.sh
+	@./scripts/setup.sh
+
+dev-sync: ## Sync dependencies with uv
+	@echo "🔄 Syncing dependencies with uv..."
+	@uv pip sync pyproject.toml
+
+dev-lock: ## Create/update uv.lock file
+	@echo "🔒 Creating/updating uv.lock..."
+	@uv pip compile pyproject.toml -o requirements.lock
+
+dev-install: ## Install dependencies with uv
+	@echo "📦 Installing dependencies with uv..."
+	@uv pip install -r pyproject.toml
+
+dev-install-dev: ## Install dev dependencies with uv
+	@echo "📦 Installing dev dependencies with uv..."
+	@uv pip install -r pyproject.toml --extra dev
 
 dev-test: ## Run tests in development mode
 	@echo "🧪 Running tests..."

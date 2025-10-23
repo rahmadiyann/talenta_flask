@@ -11,6 +11,7 @@ import schedule
 import json
 import random
 from datetime import datetime
+import threading
 
 # Import timezone handling (zoneinfo for Python 3.9+, fallback to pytz)
 try:
@@ -30,8 +31,11 @@ except ImportError:
             return timezone(timedelta(hours=7))
 
 from src.api import talenta
+from src.api.talenta import get_attendance_status
+from src.api.server import app, get_automation_state
 from src.core import location
 from src.core.logger import setup_logger
+from src.core.telegram import send_telegram_message
 from src.config import config_local
 
 # Initialize logger
@@ -39,6 +43,23 @@ logger = setup_logger('talenta_scheduler')
 
 # Set timezone to Asia/Jakarta (GMT+7)
 TIMEZONE = ZoneInfo(config_local.TIMEZONE)
+
+# Module-level notification tracker to prevent duplicate notifications
+# Format: {date_str: {'clock_in_skipped': bool, 'clock_out_skipped': bool}}
+notification_tracker = {}
+
+def start_flask_server():
+    """
+    Start Flask web server in daemon thread
+    Runs the control API on port from environment variable (default: 5000)
+    """
+    try:
+        # Get port from environment variable (Railway, Heroku, etc.) or default to 5000
+        port = int(os.environ.get('PORT', 5000))
+        logger.info(f'🚀 Starting Flask control server on port {port}...')
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    except Exception as error:
+        logger.error(f'❌ Flask server error: {error}')
 
 def get_cookies():
     """
@@ -83,6 +104,46 @@ def clock_in_job(loc, cookies):
     max_retries = 3
     attempt = 0
     current_cookies = cookies
+
+    # Check if already clocked in before attempting
+    today_date = datetime.now(TIMEZONE).strftime('%Y-%m-%d')
+    try:
+        attendance_status = get_attendance_status(current_cookies)
+
+        # Skip if already clocked in
+        if attendance_status['has_clocked_in']:
+            # Check if notification already sent today
+            if not notification_tracker.get(today_date, {}).get('clock_in_skipped', False):
+                current_time = datetime.now(TIMEZONE)
+                logger.info('⏭️  Clock in skipped - already clocked in today')
+
+                # Send Telegram notification
+                message = (
+                    "🔔 Talenta Automation Alert\n\n"
+                    "Clock In Skipped\n"
+                    f"Date: {current_time.strftime('%Y-%m-%d')}\n"
+                    f"Time: {current_time.strftime('%H:%M:%S %Z')}\n"
+                    "Reason: You have already clocked in today."
+                )
+                send_telegram_message(message)
+
+                # Mark notification as sent
+                if today_date not in notification_tracker:
+                    notification_tracker[today_date] = {'clock_in_skipped': True, 'clock_out_skipped': False}
+                else:
+                    notification_tracker[today_date]['clock_in_skipped'] = True
+            else:
+                logger.info('⏭️  Clock in skipped - already clocked in today (notification already sent)')
+
+            return
+    except Exception as status_error:
+        logger.warning(f'⚠️  Failed to check attendance status: {status_error}')
+        logger.info('🔄 Proceeding with clock in attempt...')
+
+    # Check if automation is enabled
+    if not get_automation_state():
+        logger.info('⏸️  Clock in skipped - automation is disabled')
+        return
 
     while attempt < max_retries:
         try:
@@ -227,6 +288,46 @@ def clock_out_job(loc, cookies):
     attempt = 0
     current_cookies = cookies
 
+    # Check if already clocked out before attempting
+    today_date = datetime.now(TIMEZONE).strftime('%Y-%m-%d')
+    try:
+        attendance_status = get_attendance_status(current_cookies)
+
+        # Skip if already clocked out
+        if attendance_status['has_clocked_out']:
+            # Check if notification already sent today
+            if not notification_tracker.get(today_date, {}).get('clock_out_skipped', False):
+                current_time = datetime.now(TIMEZONE)
+                logger.info('⏭️  Clock out skipped - already clocked out today')
+
+                # Send Telegram notification
+                message = (
+                    "🔔 Talenta Automation Alert\n\n"
+                    "Clock Out Skipped\n"
+                    f"Date: {current_time.strftime('%Y-%m-%d')}\n"
+                    f"Time: {current_time.strftime('%H:%M:%S %Z')}\n"
+                    "Reason: You have already clocked out today."
+                )
+                send_telegram_message(message)
+
+                # Mark notification as sent
+                if today_date not in notification_tracker:
+                    notification_tracker[today_date] = {'clock_in_skipped': False, 'clock_out_skipped': True}
+                else:
+                    notification_tracker[today_date]['clock_out_skipped'] = True
+            else:
+                logger.info('⏭️  Clock out skipped - already clocked out today (notification already sent)')
+
+            return
+    except Exception as status_error:
+        logger.warning(f'⚠️  Failed to check attendance status: {status_error}')
+        logger.info('🔄 Proceeding with clock out attempt...')
+
+    # Check if automation is enabled
+    if not get_automation_state():
+        logger.info('⏸️  Clock out skipped - automation is disabled')
+        return
+
     while attempt < max_retries:
         try:
             current_time = datetime.now(TIMEZONE)
@@ -312,7 +413,21 @@ def main():
         # Schedule jobs with random times
         schedule_jobs_with_random_times(loc, cookies)
 
-        logger.info("✅ Scheduler started successfully!")
+        # Start Flask server in background thread
+        flask_thread = threading.Thread(
+            target=start_flask_server,
+            name='flask-server',
+            daemon=True
+        )
+        flask_thread.start()
+        time.sleep(1)  # Give Flask time to initialize
+
+        # Get port for logging
+        port = int(os.environ.get('PORT', 5000))
+
+        logger.info("✅ Scheduler and web server started successfully!")
+        logger.info(f"   Flask control server started on http://0.0.0.0:{port}")
+        logger.info(f"   Web API available at http://localhost:{port} (use /enable, /disable, /status endpoints)")
         logger.info("   Jobs will be rescheduled daily at midnight with new random times")
         logger.info("   Press Ctrl+C to stop")
         logger.info("")

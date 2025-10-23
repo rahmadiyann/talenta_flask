@@ -7,11 +7,26 @@ import base64
 import codecs
 import re
 import requests
+from datetime import datetime
 from typing import Dict, Optional, Any
 from src.core.auth import extract_authenticity_token, extract_cookies
 from src.core.logger import setup_logger
+from src.config.config_local import TIMEZONE
 
 logger = setup_logger("talenta_api")
+
+# Timezone handling (same pattern as logger.py)
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    try:
+        import pytz
+        def ZoneInfo(tz_name):
+            return pytz.timezone(tz_name)
+    except ImportError:
+        from datetime import timezone, timedelta
+        def ZoneInfo(tz_name):
+            return timezone(timedelta(hours=7))
 
 def rot13(text: str) -> str:
     """
@@ -89,6 +104,159 @@ def get_csrf_token(cookies: str) -> Optional[str]:
     except Exception as error:
         logger.error(f"⚠️  Could not fetch CSRF token: {error}")
         return None
+
+
+def get_attendance_status(cookies: str) -> Dict[str, bool]:
+    """
+    Check if the user has already clocked in or out today.
+
+    This function implements a two-tier approach:
+    1. Primary: Attempts to fetch attendance data from the internal API endpoint
+    2. Fallback: If API fails, parses the HTML page to extract attendance status
+
+    Args:
+        cookies: Session cookie string
+
+    Returns:
+        Dictionary with two boolean keys:
+        - has_clocked_in: True if user has clocked in today
+        - has_clocked_out: True if user has clocked out today
+
+        Returns False values on uncertainty or errors (allowing automation to proceed).
+    """
+    # Default return value (safe default - allows automation to proceed)
+    default_status = {'has_clocked_in': False, 'has_clocked_out': False}
+
+    try:
+        # Get today's date in the configured timezone
+        try:
+            tz = ZoneInfo(TIMEZONE)
+            today = datetime.now(tz).strftime('%Y-%m-%d')
+        except Exception as tz_error:
+            logger.warning(f"⚠️  Timezone error, using system time: {tz_error}")
+            today = datetime.now().strftime('%Y-%m-%d')
+
+        headers = {
+            'Cookie': cookies,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        }
+
+        # PRIMARY APPROACH: Try API endpoint first
+        try:
+            logger.info('🔍 Checking attendance status via API endpoint...')
+            api_response = requests.get(
+                'https://hr.talenta.co/api/web/live-attendance',
+                headers=headers,
+                timeout=10
+            )
+
+            if api_response.status_code == 200:
+                try:
+                    data = api_response.json()
+
+                    # Handle different response formats
+                    records = []
+                    if isinstance(data, list):
+                        records = data
+                    elif isinstance(data, dict) and 'data' in data:
+                        records = data['data'] if isinstance(data['data'], list) else []
+
+                    # Filter for today's attendance record
+                    today_record = None
+                    for record in records:
+                        # Check both 'date' and 'clock_date' fields (different API variants)
+                        record_date = record.get('date') or record.get('clock_date')
+                        if record_date and record_date.startswith(today):
+                            today_record = record
+                            break
+
+                    if today_record:
+                        # Check clock in/out status
+                        has_clocked_in = bool(
+                            today_record.get('final_check_in') or
+                            today_record.get('clock_time')
+                        )
+                        has_clocked_out = bool(today_record.get('final_check_out'))
+
+                        logger.info(f'✅ Attendance status retrieved: clocked_in={has_clocked_in}, clocked_out={has_clocked_out}')
+                        return {
+                            'has_clocked_in': has_clocked_in,
+                            'has_clocked_out': has_clocked_out
+                        }
+                    else:
+                        # No record for today - user hasn't clocked in yet
+                        logger.info('✅ No attendance record found for today')
+                        return default_status
+
+                except (ValueError, KeyError) as parse_error:
+                    logger.warning(f'⚠️  Failed to parse API response: {parse_error}')
+                    # Fall through to HTML parsing
+            else:
+                logger.warning(f'⚠️  API endpoint returned status {api_response.status_code}')
+                # Fall through to HTML parsing
+
+        except requests.exceptions.RequestException as api_error:
+            logger.warning(f'⚠️  API request failed: {api_error}')
+            # Fall through to HTML parsing
+
+        # FALLBACK APPROACH: Parse HTML page
+        logger.info('🔍 Falling back to HTML parsing...')
+
+        try:
+            html_response = requests.get(
+                'https://hr.talenta.co/live-attendance',
+                headers=headers,
+                timeout=10
+            )
+
+            if html_response.status_code == 200:
+                html = html_response.text
+
+                # Look for attendance status indicators in HTML
+                # Pattern 1: Look for "Clock In" button (indicates not clocked in)
+                clock_in_button = re.search(r'Clock\s+In', html, re.IGNORECASE)
+
+                # Pattern 2: Look for "Clock Out" button (indicates clocked in but not out)
+                clock_out_button = re.search(r'Clock\s+Out', html, re.IGNORECASE)
+
+                # Pattern 3: Look for time stamps or status indicators
+                # Format: "HH:MM" or "HH:MM:SS"
+                time_pattern = r'(\d{2}:\d{2}(?::\d{2})?)'
+                time_matches = re.findall(time_pattern, html)
+
+                # Logic:
+                # - If "Clock In" button is present, user hasn't clocked in
+                # - If "Clock Out" button is present, user has clocked in but not out
+                # - If neither button is present and time stamps exist, user may have clocked out
+
+                has_clocked_in = False
+                has_clocked_out = False
+
+                if not clock_in_button and (clock_out_button or time_matches):
+                    # No "Clock In" button but "Clock Out" button or timestamps present
+                    has_clocked_in = True
+
+                    # Check if already clocked out (no "Clock Out" button)
+                    if not clock_out_button and len(time_matches) >= 2:
+                        # Multiple timestamps suggest both clock in and out
+                        has_clocked_out = True
+
+                logger.info(f'✅ Attendance status from HTML: clocked_in={has_clocked_in}, clocked_out={has_clocked_out}')
+                return {
+                    'has_clocked_in': has_clocked_in,
+                    'has_clocked_out': has_clocked_out
+                }
+            else:
+                logger.error(f'⚠️  HTML page returned status {html_response.status_code}')
+                return default_status
+
+        except requests.exceptions.RequestException as html_error:
+            logger.error(f'⚠️  HTML request failed: {html_error}')
+            return default_status
+
+    except Exception as error:
+        logger.error(f'⚠️  Could not check attendance status: {error}')
+        return default_status
 
 
 def prep_form(lat: str, long: str, cookies: str, desc: str, is_checkout: bool = False) -> Dict[str, Any]:

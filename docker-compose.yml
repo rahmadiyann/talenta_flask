@@ -18,6 +18,8 @@ services:
       - TIME_CLOCK_IN=${TIME_CLOCK_IN:-09:00}
       - TIME_CLOCK_OUT=${TIME_CLOCK_OUT:-17:00}
       - TZ=${TZ:-Asia/Jakarta}
+    ports:
+      - "5000:5000"
     volumes:
       # Mount config file if you prefer file-based config
       - ./src/config/config_local.py:/app/src/config/config_local.py:ro

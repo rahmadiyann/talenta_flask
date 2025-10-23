@@ -9,24 +9,39 @@ echo "Checking Python version..."
 python3 --version
 
 if [ $? -ne 0 ]; then
-    echo "❌ Python 3 is not installed. Please install Python 3.7 or higher."
+    echo "❌ Python 3 is not installed. Please install Python 3.9 or higher."
     exit 1
 fi
 
 echo ""
 
-# Check if pip is installed
-if ! command -v pip3 &> /dev/null; then
-    echo "❌ pip3 not found. Please install pip."
-    exit 1
+# Check if uv is installed
+if ! command -v uv &> /dev/null; then
+    echo "❌ uv not found. Installing uv..."
+    echo ""
+
+    # Install uv using the official installer
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    if [ $? -ne 0 ]; then
+        echo "❌ Failed to install uv."
+        echo "Please install manually: https://docs.astral.sh/uv/getting-started/installation/"
+        exit 1
+    fi
+
+    # Source the cargo environment to make uv available
+    source $HOME/.cargo/env
+
+    echo "✅ uv installed successfully"
+else
+    echo "✅ uv is available ($(uv --version))"
 fi
 
-echo "✅ pip is available ($(pip3 --version))"
 echo ""
 
-# Create virtual environment
-echo "Creating virtual environment..."
-python3 -m venv venv
+# Create virtual environment with uv
+echo "Creating virtual environment with uv..."
+uv venv venv --python 3.11
 
 if [ $? -ne 0 ]; then
     echo "❌ Failed to create virtual environment."
@@ -40,13 +55,9 @@ echo ""
 echo "Activating virtual environment..."
 source venv/bin/activate
 
-# Upgrade pip
-echo "Upgrading pip..."
-pip install --upgrade pip
-
-# Install dependencies with pip
-echo "Installing dependencies..."
-pip install -r requirements.txt
+# Install dependencies with uv
+echo "Installing dependencies with uv..."
+uv pip install -r pyproject.toml
 
 if [ $? -ne 0 ]; then
     echo "❌ Failed to install dependencies."

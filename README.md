@@ -9,6 +9,8 @@ Python version of the Mekari Talenta HR automation tool for clocking in and out.
 - **Auto Location Detection**: Uses IP-based geolocation (with fallback to configured coordinates)
 - **CLI Tool**: Simple command-line interface for manual clock in/out
 - **Automated Scheduler**: Schedule automatic clock in/out for weekdays
+- **Attendance Duplicate Prevention**: Checks if you've already clocked in/out before posting to prevent duplicate attendance records
+- **Web API Control**: REST API endpoints to enable/disable automation remotely via HTTP requests
 - **CSRF Protection**: Automatically fetches and includes CSRF tokens
 - **Coordinate Encoding**: Double-encoded coordinates (Base64 + ROT13) for security
 
@@ -16,7 +18,8 @@ Python version of the Mekari Talenta HR automation tool for clocking in and out.
 
 ### Native Python
 
-- Python 3.7 or higher
+- Python 3.9 or higher
+- uv (fast Python package installer) - installed automatically by setup script
 - Internet connection
 - Talenta/Mekari account
 
@@ -26,11 +29,91 @@ Python version of the Mekari Talenta HR automation tool for clocking in and out.
 - Docker Compose 1.29 or higher
 - Talenta/Mekari account
 
+## Why uv?
+
+This project uses **uv** instead of pip for dependency management. Benefits include:
+
+- **10-100x faster** than pip for dependency resolution and installation
+- **Reproducible builds** with `requirements.lock` file
+- **Smaller Docker images** with better layer caching
+- **Modern Python packaging** using `pyproject.toml` standard
+- **Drop-in replacement** for pip - same commands, better performance
+
+Read more: [uv documentation](https://docs.astral.sh/uv/)
+
 ## Installation
 
-### Option 1: Docker (Recommended)
+### Option 1: Railway Deployment (Cloud)
 
-Docker provides the easiest way to run the application with all dependencies included.
+Deploy to Railway with one click or via CLI:
+
+**One-Click Deploy:**
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new)
+
+**Via Railway CLI:**
+
+```bash
+# Install Railway CLI
+npm i -g @railway/cli
+
+# Login to Railway
+railway login
+
+# Initialize project (from this directory)
+railway init
+
+# Set environment variables
+railway variables set EMAIL="your.email@company.com"
+railway variables set PASSWORD="yourpassword"
+railway variables set LATITUDE="-6.000"
+railway variables set LONGITUDE="107.000"
+railway variables set TIME_CLOCK_IN="09:00"
+railway variables set TIME_CLOCK_OUT="17:00"
+railway variables set TZ="Asia/Jakarta"
+
+# Optional: Telegram notifications
+railway variables set TELEGRAM_BOT_TOKEN="123456789:ABCdefGHI..."
+railway variables set TELEGRAM_CHAT_ID="123456789"
+
+# Deploy
+railway up
+```
+
+**Important Railway Notes:**
+- The PORT environment variable is automatically set by Railway (no need to configure)
+- Railway provides free $5/month credit for hobby projects
+- The scheduler will run 24/7 in the cloud
+- View logs with: `railway logs`
+
+### Option 2: Docker Hub + Railway/Other Platforms
+
+Push your Docker image to Docker Hub for deployment on Railway, Render, or any platform:
+
+**Step 1: Build and Push to Docker Hub**
+
+```bash
+# Build the image
+docker build -t yourusername/talenta-api:latest .
+
+# Login to Docker Hub
+docker login
+
+# Push to Docker Hub
+docker push yourusername/talenta-api:latest
+```
+
+**Step 2: Deploy on Railway using Docker image**
+
+1. Go to [Railway](https://railway.app)
+2. Create new project → Deploy from Docker image
+3. Enter: `yourusername/talenta-api:latest`
+4. Add environment variables in Railway dashboard
+5. Deploy!
+
+### Option 3: Docker (Local)
+
+Docker provides the easiest way to run the application locally with all dependencies included.
 
 **Quick Start:**
 
@@ -51,7 +134,7 @@ make logs
 
 See [Docker Usage](#docker-usage) section for more commands.
 
-### Option 2: Native Python
+### Option 4: Native Python (Local Development)
 
 ### Quick Setup
 
@@ -71,17 +154,18 @@ This will:
 ### Manual Setup
 
 ```bash
-# Create virtual environment
-python3 -m venv venv
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.cargo/env
+
+# Create virtual environment with uv
+uv venv venv --python 3.11
 
 # Activate virtual environment
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Upgrade pip
-pip install --upgrade pip
-
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies with uv
+uv pip install -r pyproject.toml
 
 # Copy configuration file
 cp config.py config_local.py
@@ -106,6 +190,10 @@ LATITUDE = '-6.000'
 # Scheduler times
 TIME_CLOCK_IN = "09:00"
 TIME_CLOCK_OUT = "17:00"
+
+# Telegram notifications (optional)
+TELEGRAM_BOT_TOKEN = '123456789:ABCdefGHIjklMNOpqrsTUVwxyz'
+TELEGRAM_CHAT_ID = '123456789'
 ```
 
 ### Getting Cookies Manually (Method 2)
@@ -117,6 +205,141 @@ If automatic authentication fails, you can extract cookies manually:
 3. Go to Application tab � Cookies � `https://hr.talenta.co`
 4. Find `PHPSESSID` or `_identity` cookie
 5. Copy the value to `config_local.py`
+
+### Telegram Notifications (Optional)
+
+Telegram notifications alert you when attendance is skipped due to manual clock in/out that you've already performed. This helps you stay informed about the automation's behavior.
+
+**Step 1 - Create Bot:**
+
+1. Open Telegram and search for `@BotFather`
+2. Send `/newbot` command
+3. Follow the prompts to name your bot
+4. Copy the bot token provided (format: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+**Step 2 - Get Chat ID:**
+
+1. Start a conversation with your new bot (click the link provided by BotFather)
+2. Send any message to your bot (e.g., "Hello")
+3. Visit `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` in your browser (replace `<YOUR_BOT_TOKEN>` with your actual token)
+4. Find the `"chat":{"id":` field in the JSON response
+5. Copy the numeric chat ID (e.g., `123456789`)
+
+**Step 3 - Configure:**
+
+Add to `.env` file or `config_local.py`:
+
+```python
+TELEGRAM_BOT_TOKEN = '123456789:ABCdefGHIjklMNOpqrsTUVwxyz'
+TELEGRAM_CHAT_ID = '123456789'
+```
+
+**Testing:**
+
+Notifications will be sent when the automation detects you've already clocked in/out manually.
+
+**Note:**
+
+This is optional - the automation works without Telegram, you just won't receive notifications.
+
+### Web API Control
+
+The scheduler includes a built-in web server for remote control of the automation.
+
+**Overview:**
+
+The web server starts automatically with the scheduler on port 5000, providing REST API endpoints for controlling automation behavior.
+
+**Endpoints:**
+
+- **`POST /disable`** - Disable automation (scheduled jobs won't execute)
+
+  Example:
+
+  ```bash
+  curl -X POST http://localhost:5000/disable
+  ```
+
+  Response:
+
+  ```json
+  {
+  	"success": true,
+  	"message": "Automation disabled successfully",
+  	"state": { "enabled": false }
+  }
+  ```
+
+- **`POST /enable`** - Enable automation (resume scheduled jobs)
+
+  Example:
+
+  ```bash
+  curl -X POST http://localhost:5000/enable
+  ```
+
+  Response:
+
+  ```json
+  {
+  	"success": true,
+  	"message": "Automation enabled successfully",
+  	"state": { "enabled": true }
+  }
+  ```
+
+- **`GET /status`** - Check current automation state
+
+  Example:
+
+  ```bash
+  curl http://localhost:5000/status
+  ```
+
+  Response:
+
+  ```json
+  {
+  	"success": true,
+  	"state": { "enabled": true },
+  	"message": "Automation is currently enabled"
+  }
+  ```
+
+- **`GET /health`** - Health check endpoint
+
+  Example:
+
+  ```bash
+  curl http://localhost:5000/health
+  ```
+
+  Response:
+
+  ```json
+  {
+  	"status": "healthy"
+  }
+  ```
+
+**Use Cases:**
+
+- Temporarily disable automation when on vacation
+- Integrate with home automation systems
+- Control via mobile apps or scripts
+- Remote management from anywhere
+
+**Docker Access:**
+
+When running in Docker, the API is accessible at `http://localhost:5000` (port is mapped in docker-compose.yml).
+
+**State Persistence:**
+
+The automation state is stored in-memory and resets to "enabled" on container restart.
+
+**Security Note:**
+
+The API has no authentication - it's designed for local/trusted network use. For production, consider adding authentication or running behind a reverse proxy with auth.
 
 ## Usage
 
@@ -134,6 +357,7 @@ make help
 make build
 
 # Start the scheduler (runs in background)
+# This also starts the web API on port 5000
 make up
 
 # View logs (live)
@@ -222,6 +446,8 @@ LONGITUDE=107.000
 TIME_CLOCK_IN=09:00
 TIME_CLOCK_OUT=17:00
 TZ=Asia/Jakarta
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
+TELEGRAM_CHAT_ID=123456789
 ```
 
 Then start with:
@@ -314,19 +540,29 @@ python scheduler.py
 
 ```
 talenta_flask/
-    talenta_api.py          # Core API module
-    execute.py              # CLI executor
-    scheduler.py            # Automated scheduler
-    location.py             # Location detection
-    lib/
-        __init__.py
-        auth_helpers.py     # Authentication helpers
-    config.py               # Configuration template
-    config_local.py         # Your local config (not in git)
-    requirements.txt        # Python dependencies
-    setup.sh                # Setup script
-    .gitignore              # Git ignore file
-    README.md               # This file
+├── src/
+│   ├── api/
+│   │   ├── talenta.py          # Core Talenta API functions
+│   │   └── server.py           # Flask web server for control API
+│   ├── cli/
+│   │   ├── execute.py          # Manual clock in/out CLI
+│   │   └── scheduler.py        # Automated scheduler with web server
+│   ├── config/
+│   │   └── config_local.py     # Configuration (from env vars)
+│   └── core/
+│       ├── auth.py             # Authentication helpers
+│       ├── location.py         # Location detection
+│       ├── logger.py           # Logging setup
+│       └── telegram.py         # Telegram notifications
+├── scripts/
+│   ├── entrypoint.sh           # Docker entrypoint
+│   └── setup.sh                # Setup script
+├── Dockerfile                  # Docker image definition
+├── docker-compose.yml          # Docker Compose configuration
+├── Makefile                    # Convenient Docker commands
+├── requirements.txt            # Python dependencies
+├── .env.example                # Environment variables template
+└── README.md                   # This file
 ```
 
 ## How It Works
@@ -354,6 +590,21 @@ talenta_flask/
 3. Builds form data with encoded coordinates and status
 4. Posts to Talenta API with all required headers
 5. Returns success/failure response
+
+### Duplicate Prevention
+
+1. Before posting attendance, queries Talenta API for today's status
+2. Checks if `final_check_in` or `final_check_out` already exists
+3. If duplicate detected, skips posting and sends Telegram notification
+4. Prevents double attendance records from manual + automated clock in/out
+
+### Web API Control
+
+1. Flask server runs in a daemon thread alongside the scheduler
+2. Exposes REST endpoints on port 5000 for remote control
+3. Scheduler checks automation state before executing each job
+4. State is stored in-memory (resets to enabled on restart)
+5. No authentication required (designed for local/trusted network use)
 
 ## API Reference
 
@@ -411,9 +662,10 @@ print(loc)  # {'latitude': '...', 'longitude': '...'}
 | Encoding           | Manual ROT13   | `codecs.encode()`    |
 | Scheduling         | `node-cron`    | `schedule`           |
 | Process Management | PM2            | systemd/screen       |
-| Package Manager    | npm            | pip                  |
+| Package Manager    | npm/pnpm       | uv (formerly pip)    |
 | Configuration      | `config.js`    | `config.py`          |
 | Session Management | Manual         | `requests.Session()` |
+| Dependency Lock    | package-lock   | requirements.lock    |
 
 ## Troubleshooting
 
@@ -423,11 +675,14 @@ print(loc)  # {'latitude': '...', 'longitude': '...'}
 # Make sure virtual environment is activated
 source venv/bin/activate
 
-# Reinstall dependencies
-pip install -r requirements.txt
+# Reinstall dependencies with uv
+uv pip install -r pyproject.toml
 
-# Or install from pyproject.toml
-pip install -e .
+# Or sync dependencies (recommended)
+uv pip sync pyproject.toml
+
+# For development dependencies
+uv pip install -r pyproject.toml --extra dev
 ```
 
 ### Authentication Failed
@@ -453,6 +708,22 @@ pip install -e .
 - CSRF token may be invalid
 - Cookie may have expired
 - Try automatic authentication to get fresh cookies
+
+### Telegram Notifications Not Working
+
+- Verify bot token and chat ID are correct
+- Test by sending a message to your bot first
+- Check logs for Telegram-related errors
+- Ensure the bot token format is correct (should contain a colon)
+- Visit the getUpdates URL to verify your chat ID
+
+### Web API Not Accessible
+
+- Verify the scheduler is running (`make status` or `docker ps`)
+- Check that port 5000 is not blocked by firewall
+- For Docker: ensure port mapping is correct in docker-compose.yml (5000:5000)
+- Test with: `curl http://localhost:5000/health`
+- Check logs for Flask startup messages
 
 ## Security Considerations
 
