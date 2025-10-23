@@ -40,7 +40,6 @@ logger = setup_logger('talenta_scheduler')
 # Set timezone to Asia/Jakarta (GMT+7)
 TIMEZONE = ZoneInfo(config_local.TIMEZONE)
 
-
 def get_cookies():
     """
     Get authentication cookies (automatic or manual)
