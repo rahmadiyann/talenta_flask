@@ -162,7 +162,7 @@ def manual_clockin():
         JSON response with clock in result
     """
     try:
-        from src.api import talenta
+        from src.cli.scheduler import clock_in_job as clock_in
 
         logger.info("⏰ Manual clock in triggered via API")
 
@@ -177,19 +177,16 @@ def manual_clockin():
         loc = location.get_location(config_dict)
 
         # Perform clock in
-        result = talenta.clock_in(
-            lat=loc['latitude'],
-            long=loc['longitude'],
-            cookies=cookies,
-            desc="clock in via API"
+        clock_in(
+            loc=loc,
+            cookies=cookies
         )
 
         logger.info("✅ Manual clock in successful")
 
         return jsonify({
             'success': True,
-            'message': 'Clock in successful',
-            'result': result
+            'message': 'Clock in successful'
         }), 200
 
     except Exception as error:
@@ -210,7 +207,7 @@ def manual_clockout():
         JSON response with clock out result
     """
     try:
-        from src.api import talenta
+        from src.cli.scheduler import clock_out_job as clock_out
 
         logger.info("⏰ Manual clock out triggered via API")
 
@@ -225,19 +222,16 @@ def manual_clockout():
         loc = location.get_location(config_dict)
 
         # Perform clock out
-        result = talenta.clock_out(
-            lat=loc['latitude'],
-            long=loc['longitude'],
+        clock_out(
+            loc=loc,
             cookies=cookies,
-            desc="clock out via API"
         )
 
         logger.info("✅ Manual clock out successful")
 
         return jsonify({
             'success': True,
-            'message': 'Clock out successful',
-            'result': result
+            'message': 'Clock out successful'
         }), 200
 
     except Exception as error:

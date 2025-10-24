@@ -10,6 +10,8 @@ click==8.1.8
     # via flask
 flask==3.1.2
     # via talenta-api (pyproject.toml)
+gunicorn==23.0.0
+    # via talenta-api (pyproject.toml)
 idna==3.11
     # via requests
 importlib-metadata==8.7.0
@@ -23,6 +25,8 @@ markupsafe==3.0.3
     #   flask
     #   jinja2
     #   werkzeug
+packaging==25.0
+    # via gunicorn
 python-dotenv==1.1.1
     # via talenta-api (pyproject.toml)
 pytz==2025.2

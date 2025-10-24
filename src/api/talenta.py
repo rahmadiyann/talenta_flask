@@ -128,79 +128,13 @@ def get_attendance_status(cookies: str) -> Dict[str, bool]:
     default_status = {'has_clocked_in': False, 'has_clocked_out': False}
 
     try:
-        # Get today's date in the configured timezone
-        try:
-            tz = ZoneInfo(TIMEZONE)
-            today = datetime.now(tz).strftime('%Y-%m-%d')
-        except Exception as tz_error:
-            logger.warning(f"⚠️  Timezone error, using system time: {tz_error}")
-            today = datetime.now().strftime('%Y-%m-%d')
-
         headers = {
             'Cookie': cookies,
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         }
 
-        # PRIMARY APPROACH: Try API endpoint first
-        try:
-            logger.info('🔍 Checking attendance status via API endpoint...')
-            api_response = requests.get(
-                'https://hr.talenta.co/api/web/live-attendance',
-                headers=headers,
-                timeout=10
-            )
-
-            if api_response.status_code == 200:
-                try:
-                    data = api_response.json()
-
-                    # Handle different response formats
-                    records = []
-                    if isinstance(data, list):
-                        records = data
-                    elif isinstance(data, dict) and 'data' in data:
-                        records = data['data'] if isinstance(data['data'], list) else []
-
-                    # Filter for today's attendance record
-                    today_record = None
-                    for record in records:
-                        # Check both 'date' and 'clock_date' fields (different API variants)
-                        record_date = record.get('date') or record.get('clock_date')
-                        if record_date and record_date.startswith(today):
-                            today_record = record
-                            break
-
-                    if today_record:
-                        # Check clock in/out status
-                        has_clocked_in = bool(
-                            today_record.get('final_check_in') or
-                            today_record.get('clock_time')
-                        )
-                        has_clocked_out = bool(today_record.get('final_check_out'))
-
-                        logger.info(f'✅ Attendance status retrieved: clocked_in={has_clocked_in}, clocked_out={has_clocked_out}')
-                        return {
-                            'has_clocked_in': has_clocked_in,
-                            'has_clocked_out': has_clocked_out
-                        }
-                    else:
-                        # No record for today - user hasn't clocked in yet
-                        logger.info('✅ No attendance record found for today')
-                        return default_status
-
-                except (ValueError, KeyError) as parse_error:
-                    logger.warning(f'⚠️  Failed to parse API response: {parse_error}')
-                    # Fall through to HTML parsing
-            else:
-                logger.warning(f'⚠️  API endpoint returned status {api_response.status_code}')
-                # Fall through to HTML parsing
-
-        except requests.exceptions.RequestException as api_error:
-            logger.warning(f'⚠️  API request failed: {api_error}')
-            # Fall through to HTML parsing
-
-        # FALLBACK APPROACH: Parse HTML page
-        logger.info('🔍 Falling back to HTML parsing...')
+        # Parse HTML page for atendance status
+        logger.info('🔍 Parsing attendance status HTML...')
 
         try:
             html_response = requests.get(
@@ -212,36 +146,55 @@ def get_attendance_status(cookies: str) -> Dict[str, bool]:
             if html_response.status_code == 200:
                 html = html_response.text
 
-                # Look for attendance status indicators in HTML
-                # Pattern 1: Look for "Clock In" button (indicates not clocked in)
-                clock_in_button = re.search(r'Clock\s+In', html, re.IGNORECASE)
-
-                # Pattern 2: Look for "Clock Out" button (indicates clocked in but not out)
-                clock_out_button = re.search(r'Clock\s+Out', html, re.IGNORECASE)
-
-                # Pattern 3: Look for time stamps or status indicators
-                # Format: "HH:MM" or "HH:MM:SS"
-                time_pattern = r'(\d{2}:\d{2}(?::\d{2})?)'
-                time_matches = re.findall(time_pattern, html)
-
-                # Logic:
-                # - If "Clock In" button is present, user hasn't clocked in
-                # - If "Clock Out" button is present, user has clocked in but not out
-                # - If neither button is present and time stamps exist, user may have clocked out
+                # Parse attendance log section to check today's attendance
+                # The attendance log contains entries like:
+                # <div>08:49 AM</div>
+                # <small>24 Oct</small>
+                # <p>Clock In</p>
 
                 has_clocked_in = False
                 has_clocked_out = False
 
-                if not clock_in_button and (clock_out_button or time_matches):
-                    # No "Clock In" button but "Clock Out" button or timestamps present
-                    has_clocked_in = True
+                # Get today's date in the format shown in attendance log (e.g., "24 Oct")
+                try:
+                    tz = ZoneInfo(TIMEZONE)
+                except:
+                    from datetime import timezone, timedelta
+                    tz = timezone(timedelta(hours=7))
 
-                    # Check if already clocked out (no "Clock Out" button)
-                    if not clock_out_button and len(time_matches) >= 2:
-                        # Multiple timestamps suggest both clock in and out
-                        has_clocked_out = True
+                today = datetime.now(tz)
+                today_str = today.strftime('%d %b')  # Format: "24 Oct"
 
-                logger.info(f'✅ Attendance status from HTML: clocked_in={has_clocked_in}, clocked_out={has_clocked_out}')
+                # Pattern to find attendance log entries for today
+                # Look for sections containing today's date followed by Clock In/Out
+
+                # Split HTML by attendance log items (li elements)
+                log_entries = re.findall(
+                    r'<li[^>]*>.*?<div[^>]*>(\d{2}:\d{2}\s+(?:AM|PM))</div>.*?<small[^>]*>(.*?)</small>.*?<p[^>]*>(.*?)</p>',
+                    html,
+                    re.DOTALL | re.IGNORECASE
+                )
+
+                logger.info(f'📋 Found {len(log_entries)} attendance log entries')
+
+                # Check each entry for today's date
+                for time_str, date_str, action_str in log_entries:
+                    # Clean up the strings
+                    date_str = re.sub(r'\s+', ' ', date_str.strip())
+                    action_str = re.sub(r'\s+', ' ', action_str.strip())
+
+                    logger.info(f'   Entry: {date_str} - {time_str} - {action_str}')
+
+                    # Check if this entry is from today
+                    if today_str in date_str:
+                        if 'Clock In' in action_str:
+                            has_clocked_in = True
+                            logger.info(f'   ✅ Found Clock In entry for today')
+                        elif 'Clock Out' in action_str:
+                            has_clocked_out = True
+                            logger.info(f'   ✅ Found Clock Out entry for today')
+
+                logger.info(f'✅ Attendance status from log: clocked_in={has_clocked_in}, clocked_out={has_clocked_out}')
                 return {
                     'has_clocked_in': has_clocked_in,
                     'has_clocked_out': has_clocked_out

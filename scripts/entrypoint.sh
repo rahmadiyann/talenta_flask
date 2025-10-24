@@ -24,7 +24,7 @@ fi
 # Parse command
 case "$1" in
     scheduler)
-        echo "🕐 Starting scheduler..."
+        echo "🕐 Starting scheduler with Gunicorn WSGI server..."
         exec python3 -m src.cli.scheduler
         ;;
     clockin)

@@ -32,7 +32,7 @@ except ImportError:
 
 from src.api import talenta
 from src.api.talenta import get_attendance_status
-from src.api.server import app, get_automation_state
+from src.api.server import get_automation_state
 from src.core import auth, location
 from src.core.logger import setup_logger
 from src.core.telegram import send_telegram_message
@@ -50,14 +50,31 @@ notification_tracker = {}
 
 def start_flask_server():
     """
-    Start Flask web server in daemon thread
+    Start Flask web server using Gunicorn (production WSGI server)
     Runs the control API on port from environment variable (default: 5000)
     """
     try:
         # Get port from environment variable (Railway, Heroku, etc.) or default to 5000
         port = int(os.environ.get('PORT', 5000))
-        logger.info(f'🚀 Starting Flask control server on port {port}...')
-        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+        logger.info(f'🚀 Starting Flask control server with Gunicorn on port {port}...')
+
+        # Use Gunicorn as production WSGI server
+        # Run with:
+        # - 1 worker (sufficient for this use case, more efficient)
+        # - gevent worker class for better concurrency
+        # - Bind to 0.0.0.0 to accept connections from any IP
+        # - Access log disabled for cleaner output (app has its own logging)
+        import subprocess
+        subprocess.run([
+            'gunicorn',
+            '--workers', '1',
+            '--worker-class', 'sync',  # sync is fine for low-traffic API
+            '--bind', f'0.0.0.0:{port}',
+            '--access-logfile', '-',  # Log to stdout
+            '--error-logfile', '-',   # Log to stdout
+            '--log-level', 'info',
+            'src.api.server:app'
+        ])
     except Exception as error:
         logger.error(f'❌ Flask server error: {error}')
 
@@ -120,7 +137,7 @@ def clock_in_job(loc, cookies):
                 lat=loc['latitude'],
                 long=loc['longitude'],
                 cookies=current_cookies,
-                desc="clock inn"
+                desc="ci"
             )
 
             # Display result
@@ -303,7 +320,7 @@ def clock_out_job(loc, cookies):
                 lat=loc['latitude'],
                 long=loc['longitude'],
                 cookies=current_cookies,
-                desc="clock outt"
+                desc="co"
             )
 
             # Display result
