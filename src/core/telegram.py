@@ -3,7 +3,6 @@ Telegram notification module for Talenta Flask application
 """
 
 import requests
-from src.config.config_local import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from src.core.logger import get_logger
 
 # Initialize logger
@@ -20,13 +19,13 @@ def send_telegram_message(message: str) -> bool:
     Returns:
         bool: True if the message was sent successfully, False otherwise.
     """
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.warning("Telegram is not configured. Please set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables.")
-        return False
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    telegram_bot_token = "8578824358:AAEBW3s3wbkn3VpbozCd91VsDCBw2JF1o8I"
+    telegram_chat_id = "8193662464"
+
+    url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": telegram_chat_id,
         "text": message
     }
 

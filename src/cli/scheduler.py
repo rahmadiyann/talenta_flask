@@ -31,7 +31,7 @@ except ImportError:
             return timezone(timedelta(hours=7))
 
 from src.api import talenta
-from src.api.talenta import get_attendance_status
+from src.api.talenta import get_attendance_status, get_tomorrow_shift, get_today_shift, is_work_day
 from src.api.server import get_automation_state
 from src.core import auth, location
 from src.core.logger import setup_logger
@@ -47,6 +47,65 @@ TIMEZONE = ZoneInfo(config_local.TIMEZONE)
 # Module-level notification tracker to prevent duplicate notifications
 # Format: {date_str: {'clock_in_skipped': bool, 'clock_out_skipped': bool}}
 notification_tracker = {}
+
+
+def check_and_notify_tomorrow_shift():
+    """
+    Check tomorrow's shift and send Telegram notification if WFO.
+    Called after successful clock out.
+
+    Shift types:
+    - WFA: Work From Anywhere (no notification needed, auto clock in/out)
+    - WFO: Work From Office (send notification)
+    - dayoff/National Holiday/Company Holiday: Day off (no clock in/out needed)
+    """
+    try:
+        shift_info = get_tomorrow_shift()
+
+        if not shift_info:
+            logger.warning("Could not fetch tomorrow's shift info")
+            return
+
+        office_hour = shift_info.get('office_hour_name', '')
+        schedule_date = shift_info.get('schedule_date', '')
+        is_holiday = shift_info.get('holiday', False)
+
+        logger.info(f"📅 Tomorrow's shift ({schedule_date}): {office_hour}")
+
+        # Determine shift type and action
+        office_hour_lower = office_hour.lower() if office_hour else ''
+
+        if office_hour_lower == 'wfo':
+            # WFO - Send notification to remind user to go to office
+            message = (
+                "🏢 WFO Reminder\n\n"
+                f"Tomorrow ({schedule_date}) is a Work From Office day.\n"
+                "Don't forget to go to the office!"
+            )
+            send_telegram_message(message)
+            logger.info("📬 Sent WFO reminder notification")
+
+        elif office_hour_lower == 'wfa':
+            # WFA - No notification needed, auto clock in/out will work
+            logger.info("🏠 Tomorrow is WFA - automation will handle clock in/out")
+
+        else:
+            # Day off, holiday, or other - notify that no clock in/out is needed
+            if is_holiday or office_hour_lower in ['dayoff', 'national holiday', 'company holiday']:
+                message = (
+                    "🎉 Day Off Tomorrow\n\n"
+                    f"Tomorrow ({schedule_date}) is: {office_hour}\n"
+                    "No clock in/out needed. Enjoy your day off!"
+                )
+                send_telegram_message(message)
+                logger.info(f"📬 Sent day off notification: {office_hour}")
+            else:
+                # Unknown shift type - log warning
+                logger.warning(f"Unknown shift type: {office_hour}")
+
+    except Exception as error:
+        logger.error(f"Error checking tomorrow's shift: {error}")
+
 
 def start_flask_server():
     """
@@ -83,9 +142,16 @@ def clock_in_job(loc, cookies):
     max_retries = 3
     attempt = 0
     current_cookies = cookies
+    today_date = datetime.now(TIMEZONE).strftime('%Y-%m-%d')
+
+    # Check if today is a work day based on shift schedule
+    today_shift = get_today_shift()
+    if today_shift and not is_work_day(today_shift):
+        office_hour = today_shift.get('office_hour_name', 'Unknown')
+        logger.info(f'⏭️  Clock in skipped - today is not a work day ({office_hour})')
+        return
 
     # Check if already clocked in before attempting
-    today_date = datetime.now(TIMEZONE).strftime('%Y-%m-%d')
     try:
         attendance_status = get_attendance_status(current_cookies)
 
@@ -266,9 +332,18 @@ def clock_out_job(loc, cookies):
     max_retries = 3
     attempt = 0
     current_cookies = cookies
+    today_date = datetime.now(TIMEZONE).strftime('%Y-%m-%d')
+
+    # Check if today is a work day based on shift schedule
+    today_shift = get_today_shift()
+    if today_shift and not is_work_day(today_shift):
+        office_hour = today_shift.get('office_hour_name', 'Unknown')
+        logger.info(f'⏭️  Clock out skipped - today is not a work day ({office_hour})')
+        # Still check tomorrow's shift even on off days
+        check_and_notify_tomorrow_shift()
+        return
 
     # Check if already clocked out before attempting
-    today_date = datetime.now(TIMEZONE).strftime('%Y-%m-%d')
     try:
         attendance_status = get_attendance_status(current_cookies)
 
@@ -329,9 +404,13 @@ def clock_out_job(loc, cookies):
                 # Only print success if status is 200
                 if result.get('status') == 200:
                     logger.info('✅ Clock out successful!')
+                    # Check tomorrow's shift and send notification
+                    check_and_notify_tomorrow_shift()
             else:
                 logger.info(result)
                 logger.info('✅ Clock out successful!')
+                # Check tomorrow's shift and send notification
+                check_and_notify_tomorrow_shift()
 
             return  # Exit after successful call
 

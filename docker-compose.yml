@@ -18,6 +18,11 @@ services:
       - TIME_CLOCK_IN=${TIME_CLOCK_IN:-09:00}
       - TIME_CLOCK_OUT=${TIME_CLOCK_OUT:-17:00}
       - TZ=${TZ:-Asia/Jakarta}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - MEKARI_BEARER_TOKEN=${MEKARI_BEARER_TOKEN:-}
+      - MEKARI_ORGANISATION_ID=${MEKARI_ORGANISATION_ID:-}
+      - MEKARI_ORGANISATION_USER_ID=${MEKARI_ORGANISATION_USER_ID:-}
     ports:
       - "5000:5000"
     volumes:
@@ -43,6 +48,9 @@ services:
       - LATITUDE=${LATITUDE:--6.000}
       - LONGITUDE=${LONGITUDE:-107.000}
       - TZ=${TZ:-Asia/Jakarta}
+      - MEKARI_BEARER_TOKEN=${MEKARI_BEARER_TOKEN:-}
+      - MEKARI_ORGANISATION_ID=${MEKARI_ORGANISATION_ID:-}
+      - MEKARI_ORGANISATION_USER_ID=${MEKARI_ORGANISATION_USER_ID:-}
     volumes:
       - ./src/config/config_local.py:/app/src/config/config_local.py:ro
     command: clockin
@@ -62,6 +70,11 @@ services:
       - LATITUDE=${LATITUDE:--6.000}
       - LONGITUDE=${LONGITUDE:-107.000}
       - TZ=${TZ:-Asia/Jakarta}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - MEKARI_BEARER_TOKEN=${MEKARI_BEARER_TOKEN:-}
+      - MEKARI_ORGANISATION_ID=${MEKARI_ORGANISATION_ID:-}
+      - MEKARI_ORGANISATION_USER_ID=${MEKARI_ORGANISATION_USER_ID:-}
     volumes:
       - ./src/config/config_local.py:/app/src/config/config_local.py:ro
     command: clockout

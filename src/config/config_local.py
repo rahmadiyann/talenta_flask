@@ -39,3 +39,9 @@ TIMEZONE = os.getenv('TZ', 'Asia/Jakarta')
 # Telegram notification settings
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
+
+# Mekari API settings (for schedule/shift checking)
+# Get these values from browser DevTools when viewing Talenta attendance page
+MEKARI_BEARER_TOKEN = os.getenv('MEKARI_BEARER_TOKEN', '')
+MEKARI_ORGANISATION_ID = os.getenv('MEKARI_ORGANISATION_ID', '')
+MEKARI_ORGANISATION_USER_ID = os.getenv('MEKARI_ORGANISATION_USER_ID', '')

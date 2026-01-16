@@ -120,7 +120,7 @@ def main():
                 lat=loc['latitude'],
                 long=loc['longitude'],
                 cookies=cookies,
-                desc="Hello I am In"
+                desc="ci"
             )
         else:  # clockout
             # Check if already clocked out
@@ -143,7 +143,7 @@ def main():
                 lat=loc['latitude'],
                 long=loc['longitude'],
                 cookies=cookies,
-                desc="Goodbye I am Out"
+                desc="co"
             )
 
         # Display result

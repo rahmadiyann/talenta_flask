@@ -8,10 +8,15 @@ import codecs
 import re
 import requests
 from datetime import datetime
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any
 from src.core.auth import extract_authenticity_token, extract_cookies
 from src.core.logger import setup_logger
-from src.config.config_local import TIMEZONE
+from src.config.config_local import (
+    TIMEZONE,
+    MEKARI_BEARER_TOKEN,
+    MEKARI_ORGANISATION_ID,
+    MEKARI_ORGANISATION_USER_ID
+)
 
 logger = setup_logger("talenta_api")
 
@@ -492,6 +497,462 @@ def fetch_cookies(email: str, password: str) -> str:
     except Exception as error:
         logger.error(f'❌ Cookie fetching failed: {error}')
         raise
+
+
+def _calculate_api_start_date(target_date: datetime) -> str:
+    """
+    Calculate the start_date parameter for the attendance API.
+
+    The API returns periods based on the MONTH of the start_date:
+    - start_date in January → returns Dec 21 - Jan 20
+    - start_date in February → returns Jan 21 - Feb 20
+
+    Talenta attendance periods use cutoff date of 20th:
+    - Period Dec 21 - Jan 20: target dates Dec 21 to Jan 20 → use start_date in Jan
+    - Period Jan 21 - Feb 20: target dates Jan 21 to Feb 20 → use start_date in Feb
+
+    Args:
+        target_date: The date we want to look up in the schedule.
+
+    Returns:
+        Start date string in YYYY-MM-DD format that will fetch the correct period.
+    """
+    day = target_date.day
+    month = target_date.month
+    year = target_date.year
+
+    # If day is 21-31, target is in period that ends on 20th of NEXT month
+    # So we need start_date in NEXT month
+    if day >= 21:
+        # Move to next month
+        if month == 12:
+            api_month = 1
+            api_year = year + 1
+        else:
+            api_month = month + 1
+            api_year = year
+    else:
+        # Day 1-20: target is in period ending on 20th of CURRENT month
+        # So start_date should be in current month
+        api_month = month
+        api_year = year
+
+    return f"{api_year}-{api_month:02d}-01"
+
+
+def get_schedule(start_date: Optional[str] = None, cookies: Optional[str] = None, target_date: Optional[datetime] = None) -> Optional[Dict]:
+    """
+    Fetch attendance schedule from Talenta.
+
+    Tries methods in order:
+    1. Automatic Bearer token extraction from session (recommended)
+    2. Manual Bearer token from config (fallback if auto extraction fails)
+
+    Args:
+        start_date: Start date in YYYY-MM-DD format. If None, calculated from target_date.
+        cookies: Session cookies for authentication (not used, here for API compatibility).
+        target_date: Optional datetime for calculating which attendance period to fetch.
+                    Important for dates near the 20th/21st boundary.
+
+    Returns:
+        Dict with schedule data or None if request fails.
+    """
+    if not MEKARI_ORGANISATION_ID or not MEKARI_ORGANISATION_USER_ID:
+        logger.warning("Schedule check not configured. Set MEKARI_ORGANISATION_ID and MEKARI_ORGANISATION_USER_ID.")
+        return None
+
+    # Calculate start_date based on target_date if not specified
+    if not start_date:
+        try:
+            tz = ZoneInfo(TIMEZONE)
+            if target_date:
+                start_date = _calculate_api_start_date(target_date)
+            else:
+                start_date = _calculate_api_start_date(datetime.now(tz))
+        except:
+            from datetime import timezone, timedelta
+            tz = timezone(timedelta(hours=7))
+            if target_date:
+                start_date = _calculate_api_start_date(target_date)
+            else:
+                start_date = _calculate_api_start_date(datetime.now(tz))
+
+    # Method 1: Try automatic Bearer token extraction from session
+    bearer_token = _get_bearer_token_from_session()
+    if bearer_token:
+        result = _get_schedule_with_bearer(start_date, bearer_token)
+        if result:
+            return result
+
+    # Method 2: Fallback to manual Bearer token from config
+    if MEKARI_BEARER_TOKEN:
+        result = _get_schedule_with_bearer(start_date, MEKARI_BEARER_TOKEN)
+        if result:
+            return result
+
+    logger.warning("Could not fetch schedule. Check EMAIL/PASSWORD credentials.")
+    return None
+
+
+def _extract_bearer_token_from_session(session_token: str) -> Optional[str]:
+    """
+    Extract Bearer token from the _session_token cookie value.
+
+    The cookie is URL-encoded PHP serialized data containing a UUID-style token.
+    Format: hash:2:{i:0;s:14:"_session_token";i:1;s:69:"uuid_token";}
+
+    Args:
+        session_token: The raw _session_token cookie value.
+
+    Returns:
+        The Bearer token string or None if extraction fails.
+    """
+    import urllib.parse
+
+    try:
+        # URL decode the cookie value
+        decoded = urllib.parse.unquote(session_token)
+
+        # Split by quotes to extract the token
+        parts = decoded.split('"')
+
+        # Find the UUID token (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx_something)
+        for part in parts:
+            if re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}_', part):
+                return part
+
+        return None
+    except Exception:
+        return None
+
+
+def _get_bearer_token_from_session(cookies: Optional[str] = None) -> Optional[str]:
+    """
+    Get Bearer token for Mekari API by logging in and extracting from session.
+
+    This performs a full login flow and extracts the Bearer token from
+    the _session_token cookie that Talenta sets.
+
+    Args:
+        cookies: Optional existing cookies string (not used, here for API compatibility).
+
+    Returns:
+        Bearer token string or None if extraction fails.
+    """
+    try:
+        from src.config.config_local import EMAIL, PASSWORD
+
+        if not EMAIL or not PASSWORD:
+            return None
+
+        session = requests.Session()
+
+        # Step 1: Get login page and extract authenticity token
+        login_url = 'https://account.mekari.com/users/sign_in?app_referer=Talenta'
+        response = session.get(login_url, timeout=30)
+
+        match = re.search(r'name="authenticity_token" value="([^"]+)"', response.text)
+        if not match:
+            logger.debug("Could not extract authenticity token for Bearer token extraction")
+            return None
+
+        auth_token = match.group(1)
+
+        # Step 2: Submit login
+        login_data = {
+            'utf8': '✓',
+            'authenticity_token': auth_token,
+            'user[email]': EMAIL,
+            'no-captcha-token': '',
+            'user[password]': PASSWORD,
+        }
+
+        response = session.post(login_url, data=login_data, allow_redirects=False, timeout=30)
+
+        if response.status_code != 302:
+            logger.debug("Login failed during Bearer token extraction")
+            return None
+
+        # Step 3: Follow OAuth flow
+        auth_url = 'https://account.mekari.com/auth?client_id=TAL-73645&response_type=code&scope=sso:profile'
+        response = session.get(auth_url, allow_redirects=False, timeout=30)
+
+        redirect_url = response.headers.get('location', '')
+        if not redirect_url:
+            logger.debug("No redirect URL during Bearer token extraction")
+            return None
+
+        # Step 4: Follow redirect to Talenta to get session token
+        session.get(redirect_url, timeout=30)
+
+        # Step 5: Extract Bearer token from _session_token cookie
+        session_token = session.cookies.get('_session_token', '')
+        if not session_token:
+            logger.debug("No _session_token cookie found")
+            return None
+
+        bearer_token = _extract_bearer_token_from_session(session_token)
+        if bearer_token:
+            logger.debug("Successfully extracted Bearer token from session")
+            return bearer_token
+
+        return None
+
+    except Exception as error:
+        logger.debug(f"Error getting Bearer token from session: {error}")
+        return None
+
+
+def _get_schedule_with_bearer(start_date: str, bearer_token: Optional[str] = None) -> Optional[Dict]:
+    """
+    Fetch schedule using Bearer token authentication via api.mekari.com.
+
+    Args:
+        start_date: Start date in YYYY-MM-DD format.
+        bearer_token: Optional Bearer token. If None, uses MEKARI_BEARER_TOKEN from config.
+
+    Returns:
+        Dict with schedule data or None if request fails.
+    """
+    token = bearer_token or MEKARI_BEARER_TOKEN
+    if not token or not MEKARI_ORGANISATION_ID or not MEKARI_ORGANISATION_USER_ID:
+        return None
+
+    try:
+        url = (
+            f"https://api.mekari.com/internal/talenta-attendance-web/v2/"
+            f"organisations/{MEKARI_ORGANISATION_ID}/summary_attendance_clocks"
+        )
+
+        params = {
+            'source': 'web',
+            'organisation_user_id': MEKARI_ORGANISATION_USER_ID,
+            'start_date': start_date,
+            'order': 'asc',
+            'sort': 'schedule_date',
+            'page': '1',
+            'limit': '1000000'
+        }
+
+        headers = {
+            'Accept': '*/*',
+            'Authorization': f'Bearer {token}',
+            'Origin': 'https://hr.talenta.co',
+            'Referer': 'https://hr.talenta.co/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        }
+
+        response = requests.get(url, params=params, headers=headers, timeout=30)
+
+        if response.ok:
+            logger.info("📅 Fetched schedule using Bearer token")
+            return response.json()
+        else:
+            logger.debug(f"Bearer token schedule fetch failed: HTTP {response.status_code}")
+            return None
+
+    except Exception as error:
+        logger.debug(f"Bearer token schedule fetch error: {error}")
+        return None
+
+
+def get_shift_for_date(target_date: str) -> Optional[Dict]:
+    """
+    Get shift information for a specific date.
+
+    Args:
+        target_date: Date in YYYY-MM-DD format.
+
+    Returns:
+        Dict with shift info containing:
+        - office_hour_name: Shift type (WFA, WFO, dayoff, National Holiday, etc.)
+        - holiday: Boolean indicating if it's a holiday
+        - work_start: Work start time
+        - work_end: Work end time
+        - schedule_date: The date
+        Returns None if not found or error.
+    """
+    # Parse target date string to datetime for correct month calculation
+    try:
+        target_dt = datetime.strptime(target_date, '%Y-%m-%d')
+    except ValueError:
+        logger.error(f"Invalid date format: {target_date}")
+        return None
+
+    schedule_data = get_schedule(target_date=target_dt)
+
+    if not schedule_data or 'data' not in schedule_data:
+        return None
+
+    for entry in schedule_data['data']:
+        attrs = entry.get('attributes', {})
+        if attrs.get('schedule_date') == target_date:
+            return {
+                'office_hour_name': attrs.get('office_hour_name'),
+                'holiday': attrs.get('holiday', False),
+                'work_start': attrs.get('work_start'),
+                'work_end': attrs.get('work_end'),
+                'schedule_date': attrs.get('schedule_date'),
+                'scheduled_work_total_minute': attrs.get('scheduled_work_total_minute', 0)
+            }
+
+    return None
+
+
+def get_shifts_for_date_range(start_date: str, end_date: str) -> List[Dict]:
+    """
+    Get shift information for a date range.
+
+    Args:
+        start_date: Start date in YYYY-MM-DD format (inclusive).
+        end_date: End date in YYYY-MM-DD format (inclusive).
+
+    Returns:
+        List of dicts, each containing:
+        - date: The date (YYYY-MM-DD)
+        - shift: Shift type (WFA, WFO, dayoff, National Holiday, etc.)
+        - is_work_day: Boolean indicating if it's a work day
+        - holiday: Boolean indicating if it's a holiday
+
+        Returns empty list if date parsing fails or no data found.
+    """
+    from datetime import timedelta
+
+    try:
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+    except ValueError as e:
+        logger.error(f"Invalid date format: {e}")
+        return []
+
+    if start_dt > end_dt:
+        logger.error("start_date must be before or equal to end_date")
+        return []
+
+    results = []
+    current_dt = start_dt
+
+    # Cache schedule data to avoid redundant API calls
+    # Key: API start_date (YYYY-MM-01), Value: schedule data
+    schedule_cache = {}
+
+    while current_dt <= end_dt:
+        date_str = current_dt.strftime('%Y-%m-%d')
+
+        # Calculate which API period this date belongs to
+        api_start_date = _calculate_api_start_date(current_dt)
+
+        # Fetch schedule for this period if not cached
+        if api_start_date not in schedule_cache:
+            schedule_data = get_schedule(start_date=api_start_date, target_date=current_dt)
+            schedule_cache[api_start_date] = schedule_data
+
+        # Look up this date in the cached schedule
+        shift_info = None
+        schedule_data = schedule_cache.get(api_start_date)
+
+        if schedule_data and 'data' in schedule_data:
+            for entry in schedule_data['data']:
+                attrs = entry.get('attributes', {})
+                if attrs.get('schedule_date') == date_str:
+                    shift_info = attrs
+                    break
+
+        if shift_info:
+            office_hour = shift_info.get('office_hour_name', '')
+            is_holiday = shift_info.get('holiday', False)
+            is_work = office_hour.lower() in ['wfa', 'wfo'] and not is_holiday
+
+            results.append({
+                'date': date_str,
+                'shift': office_hour,
+                'is_work_day': is_work,
+                'holiday': is_holiday
+            })
+        else:
+            # Date not found in schedule
+            results.append({
+                'date': date_str,
+                'shift': None,
+                'is_work_day': None,
+                'holiday': None
+            })
+
+        current_dt += timedelta(days=1)
+
+    return results
+
+
+def get_tomorrow_shift() -> Optional[Dict]:
+    """
+    Get shift information for tomorrow.
+
+    Returns:
+        Dict with shift info or None if not found.
+    """
+    try:
+        tz = ZoneInfo(TIMEZONE)
+        today = datetime.now(tz)
+        from datetime import timedelta
+        tomorrow = today + timedelta(days=1)
+        tomorrow_str = tomorrow.strftime('%Y-%m-%d')
+
+        return get_shift_for_date(tomorrow_str)
+    except Exception as error:
+        logger.error(f"Error getting tomorrow's shift: {error}")
+        return None
+
+
+def get_today_shift() -> Optional[Dict]:
+    """
+    Get shift information for today.
+
+    Returns:
+        Dict with shift info or None if not found.
+    """
+    try:
+        tz = ZoneInfo(TIMEZONE)
+        today = datetime.now(tz)
+        today_str = today.strftime('%Y-%m-%d')
+
+        return get_shift_for_date(today_str)
+    except Exception as error:
+        logger.error(f"Error getting today's shift: {error}")
+        return None
+
+
+def is_work_day(shift_info: Optional[Dict] = None) -> bool:
+    """
+    Check if today is a work day based on shift info.
+
+    Args:
+        shift_info: Optional shift info dict. If None, fetches today's shift.
+
+    Returns:
+        True if it's a work day (WFA or WFO), False otherwise.
+    """
+    if shift_info is None:
+        shift_info = get_today_shift()
+
+    if not shift_info:
+        # If we can't determine, default to checking weekday
+        logger.warning("Could not fetch shift info, falling back to weekday check")
+        try:
+            tz = ZoneInfo(TIMEZONE)
+            today = datetime.now(tz)
+            return today.weekday() < 5  # Monday=0, Friday=4
+        except:
+            return True
+
+    office_hour = shift_info.get('office_hour_name', '').lower()
+    is_holiday = shift_info.get('holiday', False)
+
+    # Not a work day if holiday flag is set or office_hour is not WFA/WFO
+    if is_holiday:
+        return False
+
+    # Work days are WFA and WFO
+    return office_hour in ['wfa', 'wfo']
 
 
 if __name__ == '__main__':

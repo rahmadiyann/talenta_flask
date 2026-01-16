@@ -12,6 +12,7 @@ Available Endpoints:
     GET  /health   - Health check endpoint for container monitoring
     POST /clockin  - Trigger manual clock in
     POST /clockout - Trigger manual clock out
+    GET  /schedule - Get shift schedule for a date range
 
 State Management:
     The automation state is stored in-memory using a global dictionary.
@@ -140,6 +141,12 @@ def check_status():
     }), 200
 
 
+@app.route('/favicon.ico')
+def favicon():
+    """Return empty response for favicon requests (suppresses browser 404 errors)."""
+    return '', 204
+
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """
@@ -243,6 +250,105 @@ def manual_clockout():
         }), 500
 
 
+@app.route('/schedule', methods=['GET'])
+def get_schedule():
+    """
+    Get shift schedule for a single date or date range.
+
+    Query parameters (one of the following):
+        date: Single date in YYYY-MM-DD format
+        OR
+        start_date: Start date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format
+
+    Returns:
+        JSON response with shift info for single date or list of shifts for date range
+
+    Examples:
+        GET /schedule?date=2026-01-20
+        GET /schedule?start_date=2026-01-20&end_date=2026-01-25
+    """
+    from src.api.talenta import get_shifts_for_date_range, get_shift_for_date
+
+    single_date = request.args.get('date')
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+
+    # Handle single date request
+    if single_date:
+        try:
+            logger.info(f"📅 Schedule request for single date: {single_date}")
+
+            shift = get_shift_for_date(single_date)
+
+            if not shift:
+                return jsonify({
+                    'success': False,
+                    'message': f'No schedule data found for {single_date}'
+                }), 404
+
+            office_hour = shift.get('office_hour_name', '')
+            is_holiday = shift.get('holiday', False)
+            is_work = office_hour.lower() in ['wfa', 'wfo'] and not is_holiday
+
+            return jsonify({
+                'success': True,
+                'date': single_date,
+                'shift': office_hour,
+                'is_work_day': is_work,
+                'holiday': is_holiday
+            }), 200
+
+        except Exception as error:
+            logger.error(f"❌ Schedule fetch failed: {error}")
+            return jsonify({
+                'success': False,
+                'error': str(error),
+                'message': 'Failed to fetch schedule'
+            }), 500
+
+    # Handle date range request
+    if not start_date or not end_date:
+        return jsonify({
+            'success': False,
+            'error': 'Missing required parameters',
+            'message': 'Provide either "date" for single date, or both "start_date" and "end_date" for a range (YYYY-MM-DD format)'
+        }), 400
+
+    try:
+        logger.info(f"📅 Schedule request: {start_date} to {end_date}")
+
+        shifts = get_shifts_for_date_range(start_date, end_date)
+
+        if not shifts:
+            return jsonify({
+                'success': False,
+                'message': 'No schedule data found for the specified date range'
+            }), 404
+
+        # Count work days and off days
+        work_days = sum(1 for s in shifts if s.get('is_work_day') is True)
+        off_days = sum(1 for s in shifts if s.get('is_work_day') is False)
+
+        return jsonify({
+            'success': True,
+            'start_date': start_date,
+            'end_date': end_date,
+            'total_days': len(shifts),
+            'work_days': work_days,
+            'off_days': off_days,
+            'schedule': shifts
+        }), 200
+
+    except Exception as error:
+        logger.error(f"❌ Schedule fetch failed: {error}")
+        return jsonify({
+            'success': False,
+            'error': str(error),
+            'message': 'Failed to fetch schedule'
+        }), 500
+
+
 @app.errorhandler(Exception)
 def handle_error(error):
     """
@@ -276,6 +382,7 @@ if __name__ == '__main__':
     logger.info("  GET  /health   - Health check")
     logger.info("  POST /clockin  - Trigger manual clock in")
     logger.info("  POST /clockout - Trigger manual clock out")
+    logger.info("  GET  /schedule - Get shift schedule (params: start_date, end_date)")
 
     app.run(
         host='0.0.0.0',
