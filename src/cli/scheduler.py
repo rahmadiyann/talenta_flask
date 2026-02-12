@@ -129,6 +129,7 @@ def start_flask_server():
             '--workers', '1',
             '--worker-class', 'sync',  # sync is fine for low-traffic API
             '--bind', f'0.0.0.0:{port}',
+            '--timeout', '120',  # Increase timeout to 120s for slow API calls
             '--access-logfile', '-',  # Log to stdout
             '--error-logfile', '-',   # Log to stdout
             '--log-level', 'info',
@@ -144,12 +145,17 @@ def clock_in_job(loc, cookies):
     current_cookies = cookies
     today_date = datetime.now(TIMEZONE).strftime('%Y-%m-%d')
 
-    # Check if today is a work day based on shift schedule
+    # Check if today's shift is WFA (only auto clock in for WFA, not WFO)
     today_shift = get_today_shift()
-    if today_shift and not is_work_day(today_shift):
+    if today_shift:
         office_hour = today_shift.get('office_hour_name', 'Unknown')
-        logger.info(f'⏭️  Clock in skipped - today is not a work day ({office_hour})')
-        return
+        is_holiday = today_shift.get('holiday', False)
+        office_hour_lower = office_hour.lower() if office_hour else ''
+
+        # Only proceed if it's WFA and not a holiday
+        if office_hour_lower != 'wfa' or is_holiday:
+            logger.info(f'⏭️  Clock in skipped - today is {office_hour} (auto clock in only works for WFA)')
+            return
 
     # Check if already clocked in before attempting
     try:
@@ -334,14 +340,19 @@ def clock_out_job(loc, cookies):
     current_cookies = cookies
     today_date = datetime.now(TIMEZONE).strftime('%Y-%m-%d')
 
-    # Check if today is a work day based on shift schedule
+    # Check if today's shift is WFA (only auto clock out for WFA, not WFO)
     today_shift = get_today_shift()
-    if today_shift and not is_work_day(today_shift):
+    if today_shift:
         office_hour = today_shift.get('office_hour_name', 'Unknown')
-        logger.info(f'⏭️  Clock out skipped - today is not a work day ({office_hour})')
-        # Still check tomorrow's shift even on off days
-        check_and_notify_tomorrow_shift()
-        return
+        is_holiday = today_shift.get('holiday', False)
+        office_hour_lower = office_hour.lower() if office_hour else ''
+
+        # Only proceed if it's WFA and not a holiday
+        if office_hour_lower != 'wfa' or is_holiday:
+            logger.info(f'⏭️  Clock out skipped - today is {office_hour} (auto clock out only works for WFA)')
+            # Still check tomorrow's shift even on off days
+            check_and_notify_tomorrow_shift()
+            return
 
     # Check if already clocked out before attempting
     try:
