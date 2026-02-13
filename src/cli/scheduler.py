@@ -129,7 +129,7 @@ def start_flask_server():
             '--workers', '1',
             '--worker-class', 'sync',  # sync is fine for low-traffic API
             '--bind', f'0.0.0.0:{port}',
-            '--timeout', '120',  # Increase timeout to 120s for slow API calls
+            '--timeout', '30',  # Increase timeout to 120s for slow API calls
             '--access-logfile', '-',  # Log to stdout
             '--error-logfile', '-',   # Log to stdout
             '--log-level', 'info',

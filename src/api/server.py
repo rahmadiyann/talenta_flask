@@ -1141,6 +1141,59 @@ def schedule_ui():
         const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
                            'July', 'August', 'September', 'October', 'November', 'December'];
 
+        // Schedule cache with 3-hour expiration
+        const scheduleCache = {
+            data: {},
+            expirationTime: 3 * 60 * 60 * 1000, // 3 hours in milliseconds
+
+            set: function(key, value) {
+                this.data[key] = {
+                    value: value,
+                    timestamp: Date.now()
+                };
+                // Save to localStorage for persistence
+                try {
+                    localStorage.setItem('scheduleCache', JSON.stringify(this.data));
+                } catch (e) {
+                    console.warn('Failed to save cache to localStorage:', e);
+                }
+            },
+
+            get: function(key) {
+                // Load from localStorage on first access
+                if (Object.keys(this.data).length === 0) {
+                    try {
+                        const stored = localStorage.getItem('scheduleCache');
+                        if (stored) {
+                            this.data = JSON.parse(stored);
+                        }
+                    } catch (e) {
+                        console.warn('Failed to load cache from localStorage:', e);
+                    }
+                }
+
+                const cached = this.data[key];
+                if (!cached) return null;
+
+                // Check if expired
+                if (Date.now() - cached.timestamp > this.expirationTime) {
+                    delete this.data[key];
+                    return null;
+                }
+
+                return cached.value;
+            },
+
+            clear: function() {
+                this.data = {};
+                try {
+                    localStorage.removeItem('scheduleCache');
+                } catch (e) {
+                    console.warn('Failed to clear cache from localStorage:', e);
+                }
+            }
+        };
+
         function getShiftClass(shift) {
             if (!shift) return 'shift-dayoff';
             const s = shift.toLowerCase();
@@ -1213,15 +1266,19 @@ def schedule_ui():
             // Fetch schedule data
             const scheduleData = await fetchScheduleData(formatDate(startDate), formatDate(endDate));
 
-            // Calculate statistics
+            // Calculate statistics - only for current month dates
             let wfaCount = 0, wfoCount = 0, offCount = 0, holidayCount = 0;
-            Object.values(scheduleData).forEach(day => {
-                if (day.shift) {
-                    const shift = day.shift.toLowerCase();
-                    if (shift === 'wfa') wfaCount++;
-                    else if (shift === 'wfo') wfoCount++;
-                    else if (shift.includes('holiday')) holidayCount++;
-                    else offCount++;
+            Object.entries(scheduleData).forEach(([dateStr, day]) => {
+                // Parse the date and check if it belongs to current month
+                const [y, m, d] = dateStr.split('-').map(Number);
+                if (y === year && m === (month + 1)) {
+                    if (day.shift) {
+                        const shift = day.shift.toLowerCase();
+                        if (shift === 'wfa') wfaCount++;
+                        else if (shift === 'wfo') wfoCount++;
+                        else if (shift.includes('holiday')) holidayCount++;
+                        else offCount++;
+                    }
                 }
             });
 
@@ -1292,7 +1349,19 @@ def schedule_ui():
         }
 
         async function fetchScheduleData(startDate, endDate) {
+            // Create cache key from date range
+            const cacheKey = `${startDate}_${endDate}`;
+
+            // Check cache first
+            const cached = scheduleCache.get(cacheKey);
+            if (cached) {
+                console.log('📦 Using cached schedule data for', startDate, 'to', endDate);
+                return cached;
+            }
+
+            // Fetch from API if not cached
             try {
+                console.log('🌐 Fetching schedule data from API for', startDate, 'to', endDate);
                 const response = await fetch(`/schedule?start_date=${startDate}&end_date=${endDate}`);
                 const data = await response.json();
 
@@ -1305,6 +1374,9 @@ def schedule_ui():
                 data.schedule.forEach(item => {
                     scheduleMap[item.date] = item;
                 });
+
+                // Store in cache
+                scheduleCache.set(cacheKey, scheduleMap);
 
                 return scheduleMap;
             } catch (err) {
