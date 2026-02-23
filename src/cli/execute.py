@@ -147,11 +147,11 @@ def main():
             )
 
         # Display result
-        logger.info('\n✅ Success!')
-        if isinstance(result, dict):
-            logger.info(json.dumps(result, indent=2))
-        else:
-            logger.info(result)
+        if isinstance(result, dict) and result['status'] == 200:
+            logger.info('\n✅ Success!')
+        elif '200' in str(result) or 'success' in str(result).lower():
+            logger.info('\n✅ Success!')
+            
 
     except Exception as error:
         logger.error(f'\n❌ Error: {error}')

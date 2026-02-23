@@ -1136,8 +1136,8 @@ def schedule_ui():
 
         let currentDate = new Date();
         let isTransitioning = false;
-        const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-        const weekDaysShort = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+        const weekDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const weekDaysShort = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
         const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
                            'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -1251,16 +1251,15 @@ def schedule_ui():
             const firstDay = new Date(year, month, 1);
             const lastDay = new Date(year, month + 1, 0);
 
-            // Get first Monday before or on first day of month
+            // Get first Sunday before or on first day of month
             const startDate = new Date(firstDay);
             const dayOfWeek = startDate.getDay();
-            const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-            startDate.setDate(startDate.getDate() - diff);
+            startDate.setDate(startDate.getDate() - dayOfWeek);
 
-            // Get last Sunday after or on last day of month
+            // Get last Saturday after or on last day of month
             const endDate = new Date(lastDay);
             const endDayOfWeek = endDate.getDay();
-            const endDiff = endDayOfWeek === 0 ? 0 : 7 - endDayOfWeek;
+            const endDiff = endDayOfWeek === 6 ? 0 : 6 - endDayOfWeek;
             endDate.setDate(endDate.getDate() + endDiff);
 
             // Fetch schedule data

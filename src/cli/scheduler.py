@@ -75,7 +75,7 @@ def check_and_notify_tomorrow_shift():
         # Determine shift type and action
         office_hour_lower = office_hour.lower() if office_hour else ''
 
-        if office_hour_lower == 'wfo':
+        if 'wfo' in office_hour_lower:
             # WFO - Send notification to remind user to go to office
             message = (
                 "🏢 WFO Reminder\n\n"
@@ -85,7 +85,7 @@ def check_and_notify_tomorrow_shift():
             send_telegram_message(message)
             logger.info("📬 Sent WFO reminder notification")
 
-        elif office_hour_lower == 'wfa':
+        elif 'wfa' in office_hour_lower:
             # WFA - No notification needed, auto clock in/out will work
             logger.info("🏠 Tomorrow is WFA - automation will handle clock in/out")
 
@@ -153,7 +153,7 @@ def clock_in_job(loc, cookies):
         office_hour_lower = office_hour.lower() if office_hour else ''
 
         # Only proceed if it's WFA and not a holiday
-        if office_hour_lower != 'wfa' or is_holiday:
+        if 'wfa' not in office_hour_lower or is_holiday:
             logger.info(f'⏭️  Clock in skipped - today is {office_hour} (auto clock in only works for WFA)')
             return
 
@@ -214,12 +214,12 @@ def clock_in_job(loc, cookies):
 
             # Display result
             if isinstance(result, dict):
-                logger.info(json.dumps(result, indent=2))
+                # logger.info(json.dumps(result, indent=2))
                 # Only print success if status is 200
                 if result.get('status') == 200:
                     logger.info('✅ Clock in successful!')
             else:
-                logger.info(result)
+                # logger.info(result)
                 logger.info('✅ Clock in successful!')
 
             return  # Exit after successful call
@@ -248,13 +248,13 @@ def clock_in_job(loc, cookies):
 def generate_random_clock_in_time():
     """
     Generate random clock-in time
-    Hour: 8 AM (08:00)
+    Hour: 7 AM (07:00)
     Minutes: Random between 40-59
 
     Returns:
-        str: Time in HH:MM format (e.g., "08:47")
+        str: Time in HH:MM format (e.g., "07:47")
     """
-    hour = 8
+    hour = 7
     minute = random.randint(40, 59)
     return f"{hour:02d}:{minute:02d}"
 
@@ -262,14 +262,14 @@ def generate_random_clock_in_time():
 def generate_random_clock_out_time():
     """
     Generate random clock-out time
-    Hour: 6 PM (18:00)
+    Hour: 5 PM (17:00)
     Minutes: Random between 00-59
 
     Returns:
-        str: Time in HH:MM format (e.g., "18:23")
+        str: Time in HH:MM format (e.g., "17:23")
     """
-    hour = 18
-    minute = random.randint(0, 59)
+    hour = 16
+    minute = random.randint(31, 59)
     return f"{hour:02d}:{minute:02d}"
 
 
@@ -289,8 +289,8 @@ def schedule_jobs_with_random_times(loc, cookies):
     current_time = datetime.now(TIMEZONE)
     logger.info(f"🎲 Scheduling jobs with randomized times:")
     logger.info(f"   Date: {current_time.strftime('%Y-%m-%d')}")
-    logger.info(f"   Clock in:  {clock_in_time} (randomized between 08:40-08:59)")
-    logger.info(f"   Clock out: {clock_out_time} (randomized between 18:00-18:59)")
+    logger.info(f"   Clock in:  {clock_in_time} (randomized between 07:40-07:59)")
+    logger.info(f"   Clock out: {clock_out_time} (randomized between 16:31-16:59)")
     logger.info("")
 
     # Schedule clock-in jobs for weekdays only (Monday-Friday)
@@ -411,14 +411,14 @@ def clock_out_job(loc, cookies):
 
             # Display result
             if isinstance(result, dict):
-                logger.info(json.dumps(result, indent=2))
+                # logger.info(json.dumps(result, indent=2))
                 # Only print success if status is 200
                 if result.get('status') == 200:
                     logger.info('✅ Clock out successful!')
                     # Check tomorrow's shift and send notification
                     check_and_notify_tomorrow_shift()
             else:
-                logger.info(result)
+                # logger.info(result)
                 logger.info('✅ Clock out successful!')
                 # Check tomorrow's shift and send notification
                 check_and_notify_tomorrow_shift()
