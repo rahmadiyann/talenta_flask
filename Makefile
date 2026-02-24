@@ -5,7 +5,7 @@
 # Variables
 IMAGE_NAME := talenta-api
 CONTAINER_NAME := talenta-scheduler
-COMPOSE := docker-compose
+COMPOSE := docker compose
 DOCKER := docker
 
 # Default target
@@ -160,7 +160,7 @@ clean: ## Remove containers, images, and volumes
 
 rebuild: clean build ## Clean rebuild from scratch
 
-# Docker native commands (without docker-compose)
+# Docker native commands (without docker compose)
 docker-build: ## Build image using docker (no compose)
 	@echo "🏗️  Building Docker image..."
 	$(DOCKER) build -t $(IMAGE_NAME):latest .
