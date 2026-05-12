@@ -248,13 +248,13 @@ def clock_in_job(loc, cookies):
 def generate_random_clock_in_time():
     """
     Generate random clock-in time
-    Hour: 7 AM (07:00)
+    Hour: 8 AM (08:00)
     Minutes: Random between 40-59
 
     Returns:
-        str: Time in HH:MM format (e.g., "07:47")
+        str: Time in HH:MM format (e.g., "08:47")
     """
-    hour = 7
+    hour = 8
     minute = random.randint(40, 59)
     return f"{hour:02d}:{minute:02d}"
 
