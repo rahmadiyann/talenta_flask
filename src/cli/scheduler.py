@@ -262,14 +262,14 @@ def generate_random_clock_in_time():
 def generate_random_clock_out_time():
     """
     Generate random clock-out time
-    Hour: 5 PM (17:00)
-    Minutes: Random between 00-59
+    Hour: 5 PM (18:00)
+    Minutes: Random between 10-30
 
     Returns:
-        str: Time in HH:MM format (e.g., "17:23")
+        str: Time in HH:MM format (e.g., "18:23")
     """
-    hour = 16
-    minute = random.randint(31, 59)
+    hour = 18
+    minute = random.randint(10, 30)
     return f"{hour:02d}:{minute:02d}"
 
 
@@ -290,7 +290,7 @@ def schedule_jobs_with_random_times(loc, cookies):
     logger.info(f"🎲 Scheduling jobs with randomized times:")
     logger.info(f"   Date: {current_time.strftime('%Y-%m-%d')}")
     logger.info(f"   Clock in:  {clock_in_time} (randomized between 07:40-07:59)")
-    logger.info(f"   Clock out: {clock_out_time} (randomized between 16:31-16:59)")
+    logger.info(f"   Clock out: {clock_out_time} (randomized between 18:10-18:30)")
     logger.info("")
 
     # Schedule clock-in jobs for weekdays only (Monday-Friday)
