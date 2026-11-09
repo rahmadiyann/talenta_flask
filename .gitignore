@@ -25,6 +25,12 @@ wheels/
 # Configuration
 .env
 
+# Admin panel database (accounts + activity log)
+data/
+*.db
+*.sqlite
+*.sqlite3
+
 # IDE
 .vscode/
 .idea/
@@ -38,3 +44,4 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+*:Zone.Identifier

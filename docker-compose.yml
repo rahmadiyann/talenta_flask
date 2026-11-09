@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   talenta-scheduler:
     build:
@@ -23,11 +21,17 @@ services:
       - MEKARI_BEARER_TOKEN=${MEKARI_BEARER_TOKEN:-}
       - MEKARI_ORGANISATION_ID=${MEKARI_ORGANISATION_ID:-}
       - MEKARI_ORGANISATION_USER_ID=${MEKARI_ORGANISATION_USER_ID:-}
+      # Admin panel
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - SECRET_KEY=${SECRET_KEY:-}
+      - DB_PATH=${DB_PATH:-/app/data/talenta.db}
     ports:
       - "5000:5000"
     volumes:
       # Mount config file if you prefer file-based config
       - ./src/config/config_local.py:/app/src/config/config_local.py:ro
+      # Persist the accounts/activity database across restarts
+      - ./data:/app/data
     command: scheduler
     logging:
       driver: "json-file"

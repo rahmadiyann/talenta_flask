@@ -1,6 +1,6 @@
 # Makefile for Talenta API Docker
 
-.PHONY: help build up down restart logs clean clockin clockout shell test config api-enable api-disable api-status api-health api-clockin api-clockout api-test railway-health railway-status railway-clockin railway-clockout railway-enable railway-disable
+.PHONY: help build up down restart logs clean clockin clockout shell test config panel api-health
 
 # Variables
 IMAGE_NAME := talenta-api
@@ -10,6 +10,11 @@ DOCKER := docker
 
 # Default target
 .DEFAULT_GOAL := help
+
+# Positional time argument support: `make clockin 08:45` (also accepts TIME=08:45).
+# Any extra goals that aren't real targets are treated as the time value.
+CLOCK_POS_ARGS := $(filter-out clockin clockout,$(MAKECMDGOALS))
+CLOCK_TIME := $(if $(TIME),$(TIME),$(CLOCK_POS_ARGS))
 
 help: ## Show this help message
 	@echo "Talenta API - Docker Management"
@@ -50,13 +55,20 @@ status: ## Show container status
 	@echo "📊 Container status:"
 	$(COMPOSE) ps
 
-clockin: ## Execute clock in manually
-	@echo "⏰ Executing clock in..."
-	$(COMPOSE) run --rm talenta-clockin
+clockin: ## Execute clock in, detached. Pass a time: make clockin 08:45 (or 08.45 / 0845)
+	@echo "⏰ Starting clock in$(if $(CLOCK_TIME), at $(CLOCK_TIME),) (detached)..."
+	@$(COMPOSE) run -d --rm talenta-clockin clockin $(CLOCK_TIME)
+	@echo "✅ Running in background. Safe to close the terminal. Check: docker ps / docker logs <id>"
 
-clockout: ## Execute clock out manually
-	@echo "⏰ Executing clock out..."
-	$(COMPOSE) run --rm talenta-clockout
+clockout: ## Execute clock out, detached. Pass a time: make clockout 18:15 (or 18.15 / 1815)
+	@echo "⏰ Starting clock out$(if $(CLOCK_TIME), at $(CLOCK_TIME),) (detached)..."
+	@$(COMPOSE) run -d --rm talenta-clockout clockout $(CLOCK_TIME)
+	@echo "✅ Running in background. Safe to close the terminal. Check: docker ps / docker logs <id>"
+
+# Swallow the positional time argument so make doesn't error with "No rule to make target".
+# Only matches goals that have no real rule (e.g. 08:45, 0845), turning them into no-ops.
+%::
+	@:
 
 shell: ## Open a shell in the container
 	@echo "🐚 Opening shell..."
@@ -74,84 +86,21 @@ config: ## Show current configuration
 	@echo "📝 Current configuration:"
 	@$(COMPOSE) run --rm talenta-scheduler python3 -c "from src.config import config_local as c; print(f'Email: {c.EMAIL}'); print(f'Location: {c.LATITUDE}, {c.LONGITUDE}'); print(f'Clock In: {c.TIME_CLOCK_IN}'); print(f'Clock Out: {c.TIME_CLOCK_OUT}')"
 
-# Web API control commands
-api-enable: ## Enable automation via web API
-	@echo "✅ Enabling automation..."
-	@curl -X POST http://localhost:5000/enable -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
+# Admin panel
+PORT ?= 5000
 
-api-disable: ## Disable automation via web API
-	@echo "⏸️  Disabling automation..."
-	@curl -X POST http://localhost:5000/disable -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
-
-api-status: ## Check automation status via web API
-	@echo "📊 Checking automation status..."
-	@curl http://localhost:5000/status -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
+panel: ## Print the admin panel URL
+	@echo "🖥️  Admin panel: http://localhost:$(PORT)"
+	@echo "   Log in with ADMIN_PASSWORD, then manage accounts, schedules and clock in/out."
 
 api-health: ## Check web API health
 	@echo "🏥 Checking API health..."
-	@curl http://localhost:5000/health -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
+	@curl http://localhost:$(PORT)/health -s | python3 -m json.tool || echo "❌ Failed to connect. Is the scheduler running?"
 
-api-clockin: ## Trigger manual clock in via API
-	@echo "⏰ Triggering clock in via API..."
-	@curl -X POST http://localhost:5000/clockin -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
-
-api-clockout: ## Trigger manual clock out via API
-	@echo "⏰ Triggering clock out via API..."
-	@curl -X POST http://localhost:5000/clockout -s | python3 -m json.tool || echo "❌ Failed to connect to API. Is the scheduler running?"
-
-# Railway deployment testing
-railway-health: ## Check Railway deployment health
-	@echo "🏥 Checking Railway deployment health..."
-	@curl http://localhost:5000/health -s | python3 -m json.tool || echo "❌ Failed to connect"
-
-railway-status: ## Check Railway deployment status
-	@echo "📊 Checking Railway deployment status..."
-	@curl http://localhost:5000/status -s | python3 -m json.tool || echo "❌ Failed to connect"
-
-railway-clockin: ## Trigger clock in on Railway deployment
-	@echo "⏰ Triggering clock in on Railway..."
-	@curl -X POST http://localhost:5000/clockin -s | python3 -m json.tool || echo "❌ Failed to connect"
-
-railway-clockout: ## Trigger clock out on Railway deployment
-	@echo "⏰ Triggering clock out on Railway..."
-	@curl -X POST http://localhost:5000/clockout -s | python3 -m json.tool || echo "❌ Failed to connect"
-
-railway-enable: ## Enable automation on Railway deployment
-	@echo "✅ Enabling automation on Railway..."
-	@curl -X POST http://localhost:5000/enable -s | python3 -m json.tool || echo "❌ Failed to connect"
-
-railway-disable: ## Disable automation on Railway deployment
-	@echo "⏸️  Disabling automation on Railway..."
-	@curl -X POST http://localhost:5000/disable -s | python3 -m json.tool || echo "❌ Failed to connect"
-
-api-test: ## Test all web API endpoints
-	@echo "🧪 Testing web API endpoints..."
-	@echo ""
-	@echo "1. Health Check:"
-	@curl http://localhost:5000/health -s | python3 -m json.tool || echo "❌ Failed"
-	@echo ""
-	@echo "2. Current Status:"
-	@curl http://localhost:5000/status -s | python3 -m json.tool || echo "❌ Failed"
-	@echo ""
-	@echo "3. Disable Automation:"
-	@curl -X POST http://localhost:5000/disable -s | python3 -m json.tool || echo "❌ Failed"
-	@echo ""
-	@echo "4. Check Status (should be disabled):"
-	@curl http://localhost:5000/status -s | python3 -m json.tool || echo "❌ Failed"
-	@echo ""
-	@echo "5. Enable Automation:"
-	@curl -X POST http://localhost:5000/enable -s | python3 -m json.tool || echo "❌ Failed"
-	@echo ""
-	@echo "6. Check Status (should be enabled):"
-	@curl http://localhost:5000/status -s | python3 -m json.tool || echo "❌ Failed"
-	@echo ""
-	@echo "7. Manual Clock In:"
-	@curl -X POST http://localhost:5000/clockin -s | python3 -m json.tool || echo "❌ Failed"
-	@echo ""
-	@echo "8. Manual Clock Out:"
-	@curl -X POST http://localhost:5000/clockout -s | python3 -m json.tool || echo "❌ Failed"
-	@echo ""
-	@echo "✅ API test complete"
+# NOTE: enable/disable/clock in/out and schedules are now managed per-account
+# from the admin panel (http://localhost:$(PORT)) behind the ADMIN_PASSWORD login,
+# not via unauthenticated curl endpoints. Use `make clockin` / `make clockout` for
+# the one-shot CLI (env-configured account), or the panel for everything else.
 
 clean: ## Remove containers, images, and volumes
 	@echo "🧹 Cleaning up..."

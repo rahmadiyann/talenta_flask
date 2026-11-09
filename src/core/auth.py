@@ -6,6 +6,52 @@ import re
 from typing import Optional, Dict
 
 
+def get_cookies_for_account(account: Dict) -> str:
+    """
+    Get authentication cookies for a specific account.
+
+    Prefers automatic email/password authentication and falls back to a manual
+    cookie stored on the account.
+
+    Args:
+        account: Account dict with email/password and/or cookies.
+
+    Returns:
+        Cookie string.
+
+    Raises:
+        Exception: If no usable credentials are configured or auth fails.
+    """
+    from src.api import talenta
+    from src.core.logger import get_logger
+
+    logger = get_logger('talenta_auth')
+
+    email = account.get('email') or ''
+    password = account.get('password') or ''
+    manual_cookies = account.get('cookies') or ''
+
+    if email and password:
+        logger.info(f"🔐 Authenticating account '{account.get('label')}' with email/password...")
+        try:
+            return talenta.fetch_cookies(email, password)
+        except Exception as error:
+            logger.warning(f'⚠️  Automatic authentication failed: {error}')
+            if manual_cookies:
+                logger.info('🔄 Falling back to manual cookies...')
+                return manual_cookies
+            raise
+
+    if manual_cookies:
+        logger.info(f"🍪 Using manual cookie authentication for '{account.get('label')}'")
+        return manual_cookies
+
+    raise Exception(
+        f"Account '{account.get('label')}' has no usable credentials. "
+        "Set email/password or a manual cookie."
+    )
+
+
 def get_cookies():
     """
     Get authentication cookies (automatic or manual)

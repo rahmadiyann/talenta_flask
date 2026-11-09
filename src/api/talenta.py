@@ -6,6 +6,8 @@ Main module for clocking in and out of Mekari Talenta HR system
 import base64
 import codecs
 import re
+import time
+import threading
 import requests
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -20,6 +22,16 @@ from src.config.config_local import (
 
 logger = setup_logger("talenta_api")
 
+# In-memory caches to avoid re-logging-in to Mekari on every schedule lookup.
+# A Mekari login takes several seconds and, done too often, the SSO callback can
+# be rejected — which previously surfaced as "shift unknown" in the panel.
+# Both caches are per-process (web and scheduler each keep their own).
+_cache_lock = threading.Lock()
+_BEARER_CACHE: Dict[str, Dict] = {}   # email -> {'token': str, 'exp': float}
+_BEARER_TTL = 600                      # 10 minutes (token itself lives ~15 min)
+_SCHEDULE_CACHE: Dict[tuple, Dict] = {}  # (org_id, org_user_id, start_date) -> {'data': dict, 'exp': float}
+_SCHEDULE_TTL = 180                    # 3 minutes
+
 # Timezone handling (same pattern as logger.py)
 try:
     from zoneinfo import ZoneInfo
@@ -32,6 +44,37 @@ except ImportError:
         from datetime import timezone, timedelta
         def ZoneInfo(tz_name):
             return timezone(timedelta(hours=7))
+
+def _resolve_creds(account: Optional[Dict] = None) -> Dict[str, str]:
+    """
+    Resolve Mekari/schedule credentials for a given account, falling back to
+    the environment-based config for backwards compatibility when no account
+    is supplied.
+
+    Returns a dict with keys: org_id, org_user_id, bearer_token, email, password.
+    """
+    if account:
+        return {
+            'org_id': account.get('mekari_org_id') or MEKARI_ORGANISATION_ID,
+            'org_user_id': account.get('mekari_org_user_id') or MEKARI_ORGANISATION_USER_ID,
+            'bearer_token': account.get('bearer_token') or MEKARI_BEARER_TOKEN,
+            'email': account.get('email') or '',
+            'password': account.get('password') or '',
+        }
+
+    try:
+        from src.config.config_local import EMAIL, PASSWORD
+    except Exception:
+        EMAIL, PASSWORD = '', ''
+
+    return {
+        'org_id': MEKARI_ORGANISATION_ID,
+        'org_user_id': MEKARI_ORGANISATION_USER_ID,
+        'bearer_token': MEKARI_BEARER_TOKEN,
+        'email': EMAIL,
+        'password': PASSWORD,
+    }
+
 
 def rot13(text: str) -> str:
     """
@@ -540,7 +583,9 @@ def _calculate_api_start_date(target_date: datetime) -> str:
     return f"{api_year}-{api_month:02d}-01"
 
 
-def get_schedule(start_date: Optional[str] = None, cookies: Optional[str] = None, target_date: Optional[datetime] = None) -> Optional[Dict]:
+def get_schedule(start_date: Optional[str] = None, cookies: Optional[str] = None,
+                 target_date: Optional[datetime] = None,
+                 account: Optional[Dict] = None) -> Optional[Dict]:
     """
     Fetch attendance schedule from Talenta.
 
@@ -553,11 +598,15 @@ def get_schedule(start_date: Optional[str] = None, cookies: Optional[str] = None
         cookies: Session cookies for authentication (not used, here for API compatibility).
         target_date: Optional datetime for calculating which attendance period to fetch.
                     Important for dates near the 20th/21st boundary.
+        account: Optional account dict to source credentials from. Falls back to
+                 environment config when None.
 
     Returns:
         Dict with schedule data or None if request fails.
     """
-    if not MEKARI_ORGANISATION_ID or not MEKARI_ORGANISATION_USER_ID:
+    creds = _resolve_creds(account)
+
+    if not creds['org_id'] or not creds['org_user_id']:
         logger.warning("Schedule check not configured. Set MEKARI_ORGANISATION_ID and MEKARI_ORGANISATION_USER_ID.")
         return None
 
@@ -577,17 +626,32 @@ def get_schedule(start_date: Optional[str] = None, cookies: Optional[str] = None
             else:
                 start_date = _calculate_api_start_date(datetime.now(tz))
 
+    # Serve from the short-lived cache when possible (skips login + API call).
+    cache_key = (creds['org_id'], creds['org_user_id'], start_date)
+    with _cache_lock:
+        entry = _SCHEDULE_CACHE.get(cache_key)
+        if entry and entry['exp'] > time.time():
+            return entry['data']
+
     # Method 1: Try automatic Bearer token extraction from session
-    bearer_token = _get_bearer_token_from_session()
+    bearer_token = _get_bearer_token_from_session(account=account)
     if bearer_token:
-        result = _get_schedule_with_bearer(start_date, bearer_token)
+        result = _get_schedule_with_bearer(
+            start_date, bearer_token, creds['org_id'], creds['org_user_id']
+        )
         if result:
+            with _cache_lock:
+                _SCHEDULE_CACHE[cache_key] = {'data': result, 'exp': time.time() + _SCHEDULE_TTL}
             return result
 
-    # Method 2: Fallback to manual Bearer token from config
-    if MEKARI_BEARER_TOKEN:
-        result = _get_schedule_with_bearer(start_date, MEKARI_BEARER_TOKEN)
+    # Method 2: Fallback to manual Bearer token from config/account
+    if creds['bearer_token']:
+        result = _get_schedule_with_bearer(
+            start_date, creds['bearer_token'], creds['org_id'], creds['org_user_id']
+        )
         if result:
+            with _cache_lock:
+                _SCHEDULE_CACHE[cache_key] = {'data': result, 'exp': time.time() + _SCHEDULE_TTL}
             return result
 
     logger.warning("Could not fetch schedule. Check EMAIL/PASSWORD credentials.")
@@ -626,7 +690,8 @@ def _extract_bearer_token_from_session(session_token: str) -> Optional[str]:
         return None
 
 
-def _get_bearer_token_from_session(cookies: Optional[str] = None) -> Optional[str]:
+def _get_bearer_token_from_session(cookies: Optional[str] = None,
+                                   account: Optional[Dict] = None) -> Optional[str]:
     """
     Get Bearer token for Mekari API by logging in and extracting from session.
 
@@ -635,21 +700,38 @@ def _get_bearer_token_from_session(cookies: Optional[str] = None) -> Optional[st
 
     Args:
         cookies: Optional existing cookies string (not used, here for API compatibility).
+        account: Optional account dict to source EMAIL/PASSWORD from.
 
     Returns:
         Bearer token string or None if extraction fails.
     """
     try:
-        from src.config.config_local import EMAIL, PASSWORD
+        creds = _resolve_creds(account)
+        EMAIL, PASSWORD = creds['email'], creds['password']
 
         if not EMAIL or not PASSWORD:
             return None
 
+        # Reuse a recently-obtained token instead of logging in every call.
+        with _cache_lock:
+            entry = _BEARER_CACHE.get(EMAIL)
+            if entry and entry['exp'] > time.time():
+                return entry['token']
+
         session = requests.Session()
+
+        # Browser-like headers are required: without them the Talenta SSO
+        # callback is blocked by the CDN/WAF (HTTP 403) and no _session_token
+        # cookie is ever set.
+        browser_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
 
         # Step 1: Get login page and extract authenticity token
         login_url = 'https://account.mekari.com/users/sign_in?app_referer=Talenta'
-        response = session.get(login_url, timeout=30)
+        response = session.get(login_url, headers=browser_headers, timeout=30)
 
         match = re.search(r'name="authenticity_token" value="([^"]+)"', response.text)
         if not match:
@@ -667,7 +749,8 @@ def _get_bearer_token_from_session(cookies: Optional[str] = None) -> Optional[st
             'user[password]': PASSWORD,
         }
 
-        response = session.post(login_url, data=login_data, allow_redirects=False, timeout=30)
+        response = session.post(login_url, data=login_data, headers=browser_headers,
+                                allow_redirects=False, timeout=30)
 
         if response.status_code != 302:
             logger.debug("Login failed during Bearer token extraction")
@@ -675,7 +758,7 @@ def _get_bearer_token_from_session(cookies: Optional[str] = None) -> Optional[st
 
         # Step 3: Follow OAuth flow
         auth_url = 'https://account.mekari.com/auth?client_id=TAL-73645&response_type=code&scope=sso:profile'
-        response = session.get(auth_url, allow_redirects=False, timeout=30)
+        response = session.get(auth_url, headers=browser_headers, allow_redirects=False, timeout=30)
 
         redirect_url = response.headers.get('location', '')
         if not redirect_url:
@@ -683,7 +766,9 @@ def _get_bearer_token_from_session(cookies: Optional[str] = None) -> Optional[st
             return None
 
         # Step 4: Follow redirect to Talenta to get session token
-        session.get(redirect_url, timeout=30)
+        callback_headers = dict(browser_headers)
+        callback_headers['Referer'] = 'https://account.mekari.com/'
+        session.get(redirect_url, headers=callback_headers, timeout=30, allow_redirects=True)
 
         # Step 5: Extract Bearer token from _session_token cookie
         session_token = session.cookies.get('_session_token', '')
@@ -694,6 +779,8 @@ def _get_bearer_token_from_session(cookies: Optional[str] = None) -> Optional[st
         bearer_token = _extract_bearer_token_from_session(session_token)
         if bearer_token:
             logger.debug("Successfully extracted Bearer token from session")
+            with _cache_lock:
+                _BEARER_CACHE[EMAIL] = {'token': bearer_token, 'exp': time.time() + _BEARER_TTL}
             return bearer_token
 
         return None
@@ -703,30 +790,36 @@ def _get_bearer_token_from_session(cookies: Optional[str] = None) -> Optional[st
         return None
 
 
-def _get_schedule_with_bearer(start_date: str, bearer_token: Optional[str] = None) -> Optional[Dict]:
+def _get_schedule_with_bearer(start_date: str, bearer_token: Optional[str] = None,
+                              org_id: Optional[str] = None,
+                              org_user_id: Optional[str] = None) -> Optional[Dict]:
     """
     Fetch schedule using Bearer token authentication via api.mekari.com.
 
     Args:
         start_date: Start date in YYYY-MM-DD format.
         bearer_token: Optional Bearer token. If None, uses MEKARI_BEARER_TOKEN from config.
+        org_id: Organisation id. Falls back to env config when None.
+        org_user_id: Organisation user id. Falls back to env config when None.
 
     Returns:
         Dict with schedule data or None if request fails.
     """
     token = bearer_token or MEKARI_BEARER_TOKEN
-    if not token or not MEKARI_ORGANISATION_ID or not MEKARI_ORGANISATION_USER_ID:
+    org_id = org_id or MEKARI_ORGANISATION_ID
+    org_user_id = org_user_id or MEKARI_ORGANISATION_USER_ID
+    if not token or not org_id or not org_user_id:
         return None
 
     try:
         url = (
             f"https://api.mekari.com/internal/talenta-attendance-web/v2/"
-            f"organisations/{MEKARI_ORGANISATION_ID}/summary_attendance_clocks"
+            f"organisations/{org_id}/summary_attendance_clocks"
         )
 
         params = {
             'source': 'web',
-            'organisation_user_id': MEKARI_ORGANISATION_USER_ID,
+            'organisation_user_id': org_user_id,
             'start_date': start_date,
             'order': 'asc',
             'sort': 'schedule_date',
@@ -756,12 +849,13 @@ def _get_schedule_with_bearer(start_date: str, bearer_token: Optional[str] = Non
         return None
 
 
-def get_shift_for_date(target_date: str) -> Optional[Dict]:
+def get_shift_for_date(target_date: str, account: Optional[Dict] = None) -> Optional[Dict]:
     """
     Get shift information for a specific date.
 
     Args:
         target_date: Date in YYYY-MM-DD format.
+        account: Optional account dict to source credentials from.
 
     Returns:
         Dict with shift info containing:
@@ -779,7 +873,7 @@ def get_shift_for_date(target_date: str) -> Optional[Dict]:
         logger.error(f"Invalid date format: {target_date}")
         return None
 
-    schedule_data = get_schedule(target_date=target_dt)
+    schedule_data = get_schedule(target_date=target_dt, account=account)
 
     if not schedule_data or 'data' not in schedule_data:
         return None
@@ -799,13 +893,15 @@ def get_shift_for_date(target_date: str) -> Optional[Dict]:
     return None
 
 
-def get_shifts_for_date_range(start_date: str, end_date: str) -> List[Dict]:
+def get_shifts_for_date_range(start_date: str, end_date: str,
+                              account: Optional[Dict] = None) -> List[Dict]:
     """
     Get shift information for a date range.
 
     Args:
         start_date: Start date in YYYY-MM-DD format (inclusive).
         end_date: End date in YYYY-MM-DD format (inclusive).
+        account: Optional account dict to source credentials from.
 
     Returns:
         List of dicts, each containing:
@@ -844,7 +940,7 @@ def get_shifts_for_date_range(start_date: str, end_date: str) -> List[Dict]:
 
         # Fetch schedule for this period if not cached
         if api_start_date not in schedule_cache:
-            schedule_data = get_schedule(start_date=api_start_date, target_date=current_dt)
+            schedule_data = get_schedule(start_date=api_start_date, target_date=current_dt, account=account)
             schedule_cache[api_start_date] = schedule_data
 
         # Look up this date in the cached schedule
@@ -883,7 +979,101 @@ def get_shifts_for_date_range(start_date: str, end_date: str) -> List[Dict]:
     return results
 
 
-def get_tomorrow_shift() -> Optional[Dict]:
+def get_attendance_status_api(account: Optional[Dict] = None,
+                              target_date: Optional[str] = None) -> Optional[Dict]:
+    """
+    Get attendance status for a date from the Mekari summary API.
+
+    This is more reliable than scraping the live-attendance HTML page: the API
+    returns the actual ``clock_in`` / ``clock_out`` timestamps per day.
+
+    Args:
+        account: Optional account dict to source credentials from.
+        target_date: Date in YYYY-MM-DD format. Defaults to today.
+
+    Returns:
+        Dict with keys ``has_clocked_in``, ``has_clocked_out``, ``clock_in``,
+        ``clock_out`` — or None if the schedule API is unavailable / not configured.
+    """
+    try:
+        tz = ZoneInfo(TIMEZONE)
+    except Exception:
+        from datetime import timedelta, timezone
+        tz = timezone(timedelta(hours=7))
+
+    if not target_date:
+        target_date = datetime.now(tz).strftime('%Y-%m-%d')
+
+    try:
+        target_dt = datetime.strptime(target_date, '%Y-%m-%d')
+    except ValueError:
+        return None
+
+    schedule_data = get_schedule(target_date=target_dt, account=account)
+    if not schedule_data or 'data' not in schedule_data:
+        return None
+
+    for entry in schedule_data['data']:
+        attrs = entry.get('attributes', {})
+        if attrs.get('schedule_date') == target_date:
+            clock_in = attrs.get('clock_in') or attrs.get('clockin_time')
+            clock_out = attrs.get('clock_out') or attrs.get('clockout_time')
+            return {
+                'has_clocked_in': bool(clock_in),
+                'has_clocked_out': bool(clock_out),
+                'clock_in': clock_in,
+                'clock_out': clock_out,
+            }
+
+    return None
+
+
+def get_day_summary(account: Optional[Dict] = None,
+                    target_date: Optional[str] = None) -> Optional[Dict]:
+    """
+    Get both the shift and the attendance status for a date in a single schedule
+    fetch, so the panel's "shift today" and "clocked in/out" always come from the
+    same source and never disagree.
+
+    Returns a dict with ``shift``, ``holiday``, ``has_clocked_in``,
+    ``has_clocked_out``, ``clock_in``, ``clock_out`` — or None if unavailable.
+    """
+    try:
+        tz = ZoneInfo(TIMEZONE)
+    except Exception:
+        from datetime import timedelta, timezone
+        tz = timezone(timedelta(hours=7))
+
+    if not target_date:
+        target_date = datetime.now(tz).strftime('%Y-%m-%d')
+
+    try:
+        target_dt = datetime.strptime(target_date, '%Y-%m-%d')
+    except ValueError:
+        return None
+
+    schedule_data = get_schedule(target_date=target_dt, account=account)
+    if not schedule_data or 'data' not in schedule_data:
+        return None
+
+    for entry in schedule_data['data']:
+        attrs = entry.get('attributes', {})
+        if attrs.get('schedule_date') == target_date:
+            clock_in = attrs.get('clock_in') or attrs.get('clockin_time')
+            clock_out = attrs.get('clock_out') or attrs.get('clockout_time')
+            return {
+                'shift': attrs.get('office_hour_name'),
+                'holiday': attrs.get('holiday', False),
+                'has_clocked_in': bool(clock_in),
+                'has_clocked_out': bool(clock_out),
+                'clock_in': clock_in,
+                'clock_out': clock_out,
+            }
+
+    return None
+
+
+def get_tomorrow_shift(account: Optional[Dict] = None) -> Optional[Dict]:
     """
     Get shift information for tomorrow.
 
@@ -897,13 +1087,13 @@ def get_tomorrow_shift() -> Optional[Dict]:
         tomorrow = today + timedelta(days=1)
         tomorrow_str = tomorrow.strftime('%Y-%m-%d')
 
-        return get_shift_for_date(tomorrow_str)
+        return get_shift_for_date(tomorrow_str, account=account)
     except Exception as error:
         logger.error(f"Error getting tomorrow's shift: {error}")
         return None
 
 
-def get_today_shift() -> Optional[Dict]:
+def get_today_shift(account: Optional[Dict] = None) -> Optional[Dict]:
     """
     Get shift information for today.
 
@@ -915,7 +1105,7 @@ def get_today_shift() -> Optional[Dict]:
         today = datetime.now(tz)
         today_str = today.strftime('%Y-%m-%d')
 
-        return get_shift_for_date(today_str)
+        return get_shift_for_date(today_str, account=account)
     except Exception as error:
         logger.error(f"Error getting today's shift: {error}")
         return None
