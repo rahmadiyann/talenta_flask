@@ -220,12 +220,14 @@ def _manual_clock(account_id, action):
     if not account:
         return jsonify({'success': False, 'message': 'Account not found'}), 404
 
+    force = bool((request.get_json(silent=True) or {}).get('force'))
+
     # Imported lazily so the web process doesn't pull scheduler deps at import.
     from src.core.jobs import clock_in_for_account, clock_out_for_account
 
     runner = clock_out_for_account if action == 'clockout' else clock_in_for_account
     try:
-        result = runner(account, trigger='manual')
+        result = runner(account, trigger='manual', force=force)
         http = 200 if result.get('success') else 502
         return jsonify({'success': result.get('success'),
                         'message': result.get('message'),
