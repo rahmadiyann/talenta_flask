@@ -243,9 +243,7 @@ def api_today(account_id):
         return jsonify({'success': False, 'message': 'Account not found'}), 404
 
     from datetime import datetime
-    from src.api.talenta import (
-        get_shift_for_date, get_attendance_status_api, get_attendance_status,
-    )
+    from src.api.talenta import get_day_summary, get_attendance_status
     from src.core import auth
     from src.config import config_local
 
@@ -261,25 +259,20 @@ def api_today(account_id):
     clocked_in = clocked_out = None
     clock_in_at = clock_out_at = None
 
-    # Single schedule lookup gives both the shift and the real clock in/out times.
+    # One schedule fetch gives both the shift and the real clock in/out times,
+    # so "shift today" and the clock status never disagree.
     try:
-        shift_info = get_shift_for_date(today, account=account)
-        if shift_info:
-            shift = shift_info.get('office_hour_name')
+        summary = get_day_summary(account=account, target_date=today)
+        if summary is not None:
+            shift = summary.get('shift')
+            clocked_in = summary.get('has_clocked_in')
+            clocked_out = summary.get('has_clocked_out')
+            clock_in_at = summary.get('clock_in')
+            clock_out_at = summary.get('clock_out')
     except Exception as error:
-        logger.debug(f'today shift lookup failed: {error}')
+        logger.debug(f'today summary failed: {error}')
 
-    try:
-        status = get_attendance_status_api(account=account)
-        if status is not None:
-            clocked_in = status.get('has_clocked_in')
-            clocked_out = status.get('has_clocked_out')
-            clock_in_at = status.get('clock_in')
-            clock_out_at = status.get('clock_out')
-    except Exception as error:
-        logger.debug(f'attendance API status failed: {error}')
-
-    # Fall back to HTML scraping only if the API could not tell us.
+    # Fall back to HTML scraping only if the schedule API could not tell us.
     if clocked_in is None:
         try:
             cookies = auth.get_cookies_for_account(account)

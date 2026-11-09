@@ -6,6 +6,8 @@ Main module for clocking in and out of Mekari Talenta HR system
 import base64
 import codecs
 import re
+import time
+import threading
 import requests
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -19,6 +21,16 @@ from src.config.config_local import (
 )
 
 logger = setup_logger("talenta_api")
+
+# In-memory caches to avoid re-logging-in to Mekari on every schedule lookup.
+# A Mekari login takes several seconds and, done too often, the SSO callback can
+# be rejected — which previously surfaced as "shift unknown" in the panel.
+# Both caches are per-process (web and scheduler each keep their own).
+_cache_lock = threading.Lock()
+_BEARER_CACHE: Dict[str, Dict] = {}   # email -> {'token': str, 'exp': float}
+_BEARER_TTL = 600                      # 10 minutes (token itself lives ~15 min)
+_SCHEDULE_CACHE: Dict[tuple, Dict] = {}  # (org_id, org_user_id, start_date) -> {'data': dict, 'exp': float}
+_SCHEDULE_TTL = 180                    # 3 minutes
 
 # Timezone handling (same pattern as logger.py)
 try:
@@ -614,6 +626,13 @@ def get_schedule(start_date: Optional[str] = None, cookies: Optional[str] = None
             else:
                 start_date = _calculate_api_start_date(datetime.now(tz))
 
+    # Serve from the short-lived cache when possible (skips login + API call).
+    cache_key = (creds['org_id'], creds['org_user_id'], start_date)
+    with _cache_lock:
+        entry = _SCHEDULE_CACHE.get(cache_key)
+        if entry and entry['exp'] > time.time():
+            return entry['data']
+
     # Method 1: Try automatic Bearer token extraction from session
     bearer_token = _get_bearer_token_from_session(account=account)
     if bearer_token:
@@ -621,6 +640,8 @@ def get_schedule(start_date: Optional[str] = None, cookies: Optional[str] = None
             start_date, bearer_token, creds['org_id'], creds['org_user_id']
         )
         if result:
+            with _cache_lock:
+                _SCHEDULE_CACHE[cache_key] = {'data': result, 'exp': time.time() + _SCHEDULE_TTL}
             return result
 
     # Method 2: Fallback to manual Bearer token from config/account
@@ -629,6 +650,8 @@ def get_schedule(start_date: Optional[str] = None, cookies: Optional[str] = None
             start_date, creds['bearer_token'], creds['org_id'], creds['org_user_id']
         )
         if result:
+            with _cache_lock:
+                _SCHEDULE_CACHE[cache_key] = {'data': result, 'exp': time.time() + _SCHEDULE_TTL}
             return result
 
     logger.warning("Could not fetch schedule. Check EMAIL/PASSWORD credentials.")
@@ -688,6 +711,12 @@ def _get_bearer_token_from_session(cookies: Optional[str] = None,
 
         if not EMAIL or not PASSWORD:
             return None
+
+        # Reuse a recently-obtained token instead of logging in every call.
+        with _cache_lock:
+            entry = _BEARER_CACHE.get(EMAIL)
+            if entry and entry['exp'] > time.time():
+                return entry['token']
 
         session = requests.Session()
 
@@ -750,6 +779,8 @@ def _get_bearer_token_from_session(cookies: Optional[str] = None,
         bearer_token = _extract_bearer_token_from_session(session_token)
         if bearer_token:
             logger.debug("Successfully extracted Bearer token from session")
+            with _cache_lock:
+                _BEARER_CACHE[EMAIL] = {'token': bearer_token, 'exp': time.time() + _BEARER_TTL}
             return bearer_token
 
         return None
@@ -988,6 +1019,51 @@ def get_attendance_status_api(account: Optional[Dict] = None,
             clock_in = attrs.get('clock_in') or attrs.get('clockin_time')
             clock_out = attrs.get('clock_out') or attrs.get('clockout_time')
             return {
+                'has_clocked_in': bool(clock_in),
+                'has_clocked_out': bool(clock_out),
+                'clock_in': clock_in,
+                'clock_out': clock_out,
+            }
+
+    return None
+
+
+def get_day_summary(account: Optional[Dict] = None,
+                    target_date: Optional[str] = None) -> Optional[Dict]:
+    """
+    Get both the shift and the attendance status for a date in a single schedule
+    fetch, so the panel's "shift today" and "clocked in/out" always come from the
+    same source and never disagree.
+
+    Returns a dict with ``shift``, ``holiday``, ``has_clocked_in``,
+    ``has_clocked_out``, ``clock_in``, ``clock_out`` — or None if unavailable.
+    """
+    try:
+        tz = ZoneInfo(TIMEZONE)
+    except Exception:
+        from datetime import timedelta, timezone
+        tz = timezone(timedelta(hours=7))
+
+    if not target_date:
+        target_date = datetime.now(tz).strftime('%Y-%m-%d')
+
+    try:
+        target_dt = datetime.strptime(target_date, '%Y-%m-%d')
+    except ValueError:
+        return None
+
+    schedule_data = get_schedule(target_date=target_dt, account=account)
+    if not schedule_data or 'data' not in schedule_data:
+        return None
+
+    for entry in schedule_data['data']:
+        attrs = entry.get('attributes', {})
+        if attrs.get('schedule_date') == target_date:
+            clock_in = attrs.get('clock_in') or attrs.get('clockin_time')
+            clock_out = attrs.get('clock_out') or attrs.get('clockout_time')
+            return {
+                'shift': attrs.get('office_hour_name'),
+                'holiday': attrs.get('holiday', False),
                 'has_clocked_in': bool(clock_in),
                 'has_clocked_out': bool(clock_out),
                 'clock_in': clock_in,
