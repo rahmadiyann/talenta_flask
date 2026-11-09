@@ -3,6 +3,9 @@
 
 set -e
 
+# Ensure the data directory for the SQLite database exists
+mkdir -p "$(dirname "${DB_PATH:-data/talenta.db}")" 2>/dev/null || true
+
 # Create config from environment variables if config_local.py doesn't exist
 if [ ! -f "src/config/config_local.py" ]; then
     echo "Creating config from environment variables..."
@@ -16,7 +19,12 @@ LONGITUDE = '${LONGITUDE:-107.000}'
 LATITUDE = '${LATITUDE:--6.000}'
 TIME_CLOCK_IN = '${TIME_CLOCK_IN:-09:00}'
 TIME_CLOCK_OUT = '${TIME_CLOCK_OUT:-17:00}'
-TIMEZONE = '${TZ:-}'
+TIMEZONE = '${TZ:-Asia/Jakarta}'
+TELEGRAM_BOT_TOKEN = '${TELEGRAM_BOT_TOKEN:-}'
+TELEGRAM_CHAT_ID = '${TELEGRAM_CHAT_ID:-}'
+MEKARI_BEARER_TOKEN = '${MEKARI_BEARER_TOKEN:-}'
+MEKARI_ORGANISATION_ID = '${MEKARI_ORGANISATION_ID:-}'
+MEKARI_ORGANISATION_USER_ID = '${MEKARI_ORGANISATION_USER_ID:-}'
 EOF
     echo "✅ Configuration created"
 fi
@@ -29,11 +37,11 @@ case "$1" in
         ;;
     clockin)
         echo "⏰ Clocking in..."
-        exec python3 -m src.cli.execute clockin
+        exec python3 -m src.cli.execute clockin "${2:-}"
         ;;
     clockout)
         echo "⏰ Clocking out..."
-        exec python3 -m src.cli.execute clockout
+        exec python3 -m src.cli.execute clockout "${2:-}"
         ;;
     bash|sh)
         echo "🐚 Starting shell..."

@@ -2,8 +2,71 @@
 
 Python version of the Mekari Talenta HR automation tool for clocking in and out. This eliminates the need to manually open the Talenta app to perform attendance actions.
 
+## Admin Panel (multi-account)
+
+A password-protected web UI at `/` manages multiple Talenta accounts, each with
+its own credentials, location, clock in/out times and shift rules. The
+background scheduler fires auto clock in/out per account at their configured
+times, and everything is stored in SQLite (`data/talenta.db`).
+
+**Quick start (Docker — same as the existing scheduler)**
+
+The `scheduler` container already runs the admin panel *and* the auto clock
+in/out loop in one process — no separate service needed.
+
+```bash
+# 1. Add the panel settings to your .env (alongside the existing values)
+cat >> .env <<'EOF'
+ADMIN_PASSWORD=your-strong-password
+SECRET_KEY=paste-a-long-random-string-here   # python -c "import secrets; print(secrets.token_hex(32))"
+EOF
+
+# 2. Start it like before
+make up            # or: docker compose up -d talenta-scheduler
+
+# 3. Follow logs
+make logs
+```
+
+Then open `http://localhost:5000`, log in with `ADMIN_PASSWORD`, and add accounts.
+
+> The compose file mounts `./data` into the container so `data/talenta.db`
+> (accounts + activity log) survives rebuilds and restarts.
+
+> Prefer to run it without Docker? `python -m src.cli.scheduler` works too, but
+> Docker is the recommended path.
+
+**What you can do in the panel**
+
+- **Multiple accounts** — add/edit/delete independent Talenta identities (email/password or manual cookie).
+- **Per-account auto clock in/out** — set clock in and clock out times, plus an optional random jitter (minutes) so attendance isn't posted at the exact same time daily.
+- **Shift rule per account** — *WFA only* (skip WFO/holidays, the original behaviour) or *WFA + WFO* (clock on any work day).
+- **Enable/disable** automation per account with one click.
+- **Manual clock in/out** — trigger immediately from the card (bypasses the shift gate).
+- **Schedule viewer** — monthly calendar of each account's Talenta shifts (needs the Mekari Organisation IDs set on the account).
+- **Activity log** — recent clock attempts with success / skipped / failed status.
+- **Telegram notifications** — optional per-account bot token/chat id (falls back to the global one).
+
+> On first run, any account configured via the old `.env` / `config_local`
+> values is automatically migrated in as the first account, so existing setups
+> keep working.
+
+**Key environment variables**
+
+| Variable | Purpose |
+| --- | --- |
+| `ADMIN_PASSWORD` | Password to log in to the panel (**set this!**) |
+| `SECRET_KEY` | Signs login session cookies; set a long random value for stable sessions |
+| `DB_PATH` | SQLite file location (default `data/talenta.db`; mount a volume to persist) |
+
+> **Security note:** account passwords are stored in the SQLite database in plain
+> text (the app must re-login to Talenta, so they can't be hashed). Keep the
+> `data/` directory and the panel behind authentication / a private network, and
+> always set a strong `ADMIN_PASSWORD`.
+
 ## Features
 
+- **Multi-account admin panel**: Web UI to manage many Talenta accounts, schedules and shift rules
 - **Automatic Authentication**: Login with email/password to automatically fetch session cookies
 - **Manual Cookie Support**: Fallback to manual cookie extraction from browser
 - **Auto Location Detection**: Uses IP-based geolocation (with fallback to configured coordinates)

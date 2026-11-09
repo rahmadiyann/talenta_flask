@@ -6,7 +6,8 @@ Usage: python execute.py clockin|clockout
 
 import sys
 import json
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from src.api import talenta
 from src.api.talenta import get_attendance_status
 from src.core import location
@@ -71,10 +72,59 @@ def get_cookies():
     return config_local.COOKIES_TALENTA
 
 
+def wait_until(target_time_str, timezone):
+    """
+    Block until the given HH:MM time (in the configured timezone) is reached.
+
+    Args:
+        target_time_str (str): Target time in HH:MM format (24-hour).
+        timezone: tzinfo used to interpret the target time.
+
+    If the target time has already passed today, the wait is skipped and
+    execution proceeds immediately.
+    """
+    try:
+        # Accept flexible formats: "08:45", "08.45", "8.45", "0845", "845"
+        raw = target_time_str.strip().replace('.', ':')
+        if ':' in raw:
+            hh, mm = raw.split(':')
+        elif raw.isdigit() and len(raw) in (3, 4):
+            # Compact form: last 2 digits are minutes, the rest are hours
+            hh, mm = raw[:-2], raw[-2:]
+        else:
+            raise ValueError
+        target_hour, target_minute = int(hh), int(mm)
+        if not (0 <= target_hour < 24 and 0 <= target_minute < 60):
+            raise ValueError
+    except ValueError:
+        logger.error(f"Error: Invalid time '{target_time_str}'. Use HH:MM 24-hour format (e.g. 08:45, 08.45, or 0845)")
+        sys.exit(1)
+
+    # Normalized canonical form for logging
+    target_time_str = f"{target_hour:02d}:{target_minute:02d}"
+
+    now = datetime.now(timezone)
+    target = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+
+    if target <= now:
+        logger.info(f"⏱️  Target time {target_time_str} already passed (now {now.strftime('%H:%M:%S')}), proceeding immediately")
+        return
+
+    logger.info(f"⏳ Waiting until {target.strftime('%Y-%m-%d %H:%M')} {target.strftime('%Z')} (now {now.strftime('%H:%M:%S')})...")
+    while True:
+        now = datetime.now(timezone)
+        remaining = (target - now).total_seconds()
+        if remaining <= 0:
+            break
+        # Sleep in short chunks so Ctrl+C stays responsive and drift stays small
+        time.sleep(min(remaining, 30))
+    logger.info(f"🔔 Target time {target_time_str} reached")
+
+
 def main():
     """Main execution function"""
     if len(sys.argv) < 2:
-        logger.info("Usage: python execute.py clockin|clockout")
+        logger.info("Usage: python execute.py clockin|clockout [HH:MM]")
         sys.exit(1)
 
     action = sys.argv[1].lower()
@@ -82,6 +132,11 @@ def main():
     if action not in ['clockin', 'clockout']:
         logger.error("Error: Action must be 'clockin' or 'clockout'")
         sys.exit(1)
+
+    # Optional scheduled time in HH:MM format — wait until then before executing
+    scheduled_time = sys.argv[2] if len(sys.argv) > 2 else None
+    if scheduled_time:
+        wait_until(scheduled_time, ZoneInfo(config_local.TIMEZONE))
 
     try:
         # Get location (auto-detect or fallback to config)
