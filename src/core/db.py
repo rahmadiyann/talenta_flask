@@ -115,6 +115,19 @@ def init_db() -> None:
 
                 CREATE INDEX IF NOT EXISTS idx_action_log_created
                     ON action_log (created_at DESC);
+
+                -- Authoritative record of clock events WE performed (auto or
+                -- manual). The Mekari summary API lags behind by minutes, so we
+                -- trust our own successful clocks immediately and merge the API
+                -- on top for events done elsewhere (e.g. the Talenta app).
+                CREATE TABLE IF NOT EXISTS attendance_state (
+                    account_id    INTEGER NOT NULL,
+                    date          TEXT    NOT NULL,
+                    clock_in_at   TEXT,
+                    clock_out_at  TEXT,
+                    updated_at    TEXT    NOT NULL DEFAULT '',
+                    PRIMARY KEY (account_id, date)
+                );
                 """
             )
 

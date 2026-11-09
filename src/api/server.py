@@ -284,6 +284,18 @@ def api_today(account_id):
         except Exception as error:
             logger.debug(f'attendance HTML status failed: {error}')
 
+    # Merge our own recorded clocks on top: the Mekari API lags for minutes after
+    # a clock event, so a clock we just performed must still show immediately.
+    state = accounts.get_clock_state(account_id, today)
+    if state.get('clock_in_at') and not clock_in_at:
+        clock_in_at = state['clock_in_at']
+    if state.get('clock_out_at') and not clock_out_at:
+        clock_out_at = state['clock_out_at']
+    if state.get('clock_in_at'):
+        clocked_in = True
+    if state.get('clock_out_at'):
+        clocked_out = True
+
     return jsonify({
         'success': True,
         'date': today,

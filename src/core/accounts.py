@@ -172,6 +172,48 @@ def log_action(account: Optional[Dict], action: str, status: str,
         logger.warning(f'Failed to write action log: {error}')
 
 
+def record_clock(account_id: int, action: str, clock_at: str, date: str) -> None:
+    """
+    Record a successful clock event we performed, so the panel and the scheduler
+    reflect it immediately (the Mekari summary API lags by minutes).
+
+    Args:
+        account_id: Account id.
+        action: 'clockin' or 'clockout'.
+        clock_at: ISO timestamp of the clock event.
+        date: The schedule date (YYYY-MM-DD) the event belongs to.
+    """
+    column = 'clock_out_at' if action == 'clockout' else 'clock_in_at'
+    try:
+        db.init_db()
+        with db.get_connection() as conn:
+            conn.execute(
+                f'''INSERT INTO attendance_state (account_id, date, {column}, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(account_id, date)
+                    DO UPDATE SET {column} = excluded.{column}, updated_at = excluded.updated_at''',
+                (account_id, date, clock_at, _now()),
+            )
+    except Exception as error:  # never break a clock action over bookkeeping
+        logger.warning(f'Failed to record clock state: {error}')
+
+
+def get_clock_state(account_id: int, date: str) -> Dict:
+    """Return {'clock_in_at', 'clock_out_at'} for a date, or {} if none recorded."""
+    try:
+        db.init_db()
+        with db.get_connection() as conn:
+            row = conn.execute(
+                'SELECT clock_in_at, clock_out_at FROM attendance_state '
+                'WHERE account_id = ? AND date = ?',
+                (account_id, date),
+            ).fetchone()
+        return dict(row) if row else {}
+    except Exception as error:
+        logger.warning(f'Failed to read clock state: {error}')
+        return {}
+
+
 def recent_logs(limit: int = 50) -> List[Dict]:
     db.init_db()
     with db.get_connection() as conn:
