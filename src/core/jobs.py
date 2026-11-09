@@ -168,10 +168,15 @@ def _run_clock(account: Dict, action: str, trigger: str, force: bool = False) ->
         logger.info(f"⚠️  [{label}] {verb} forced (double clock confirmed)")
     else:
         try:
-            status = get_attendance_status_api(account=account)
-            if status is None:
-                status = get_attendance_status(cookies)
-            already = status['has_clocked_out'] if is_out else status['has_clocked_in']
+            today_str = _now().strftime('%Y-%m-%d')
+            # Trust our own record first (instant), then the Mekari API, then HTML.
+            state = accounts.get_clock_state(account.get('id'), today_str)
+            already = bool(state.get('clock_out_at' if is_out else 'clock_in_at'))
+            if not already:
+                status = get_attendance_status_api(account=account)
+                if status is None:
+                    status = get_attendance_status(cookies)
+                already = status['has_clocked_out'] if is_out else status['has_clocked_in']
             if already:
                 logger.info(f"⏭️  [{label}] {verb} skipped - already done today")
                 send_telegram_message(
@@ -208,6 +213,14 @@ def _run_clock(account: Dict, action: str, trigger: str, force: bool = False) ->
             ok = (not isinstance(result, dict)) or result.get('status') == 200
             if ok:
                 logger.info(f"✅ [{label}] {verb} successful!")
+                # Record our own clock event — the Mekari summary API lags, so
+                # this is what makes the panel show it right away.
+                now = _now()
+                clock_at = now.isoformat()
+                if isinstance(result, dict):
+                    clock_at = (result.get('data') or {}).get('clock_time') or clock_at
+                accounts.record_clock(account.get('id'), action, clock_at,
+                                      now.strftime('%Y-%m-%d'))
                 if is_out:
                     _notify_tomorrow_shift(account)
                 return done('success', f'{verb} successful', True)

@@ -325,7 +325,7 @@ ADMIN_HTML = r"""<!DOCTYPE html>
             <div class="name">Talenta <span>Attendance</span></div>
         </div>
         <div class="topbar-actions">
-            <button class="btn btn-quiet btn-sm" onclick="loadAll()" title="Refresh" id="refreshBtn"></button>
+            <button class="btn btn-quiet btn-sm" onclick="refreshAll()" title="Refresh" id="refreshBtn"></button>
             <a class="btn btn-quiet btn-sm" href="/logout">Log out</a>
         </div>
     </div>
@@ -537,6 +537,8 @@ function cardHtml(a){
     + '</div></div>';
 }
 
+function refreshAll(){ todayCache.clear(); loadAll(); }
+
 async function loadAll(){
   try {
     const data = await api('/api/accounts');
@@ -552,34 +554,67 @@ async function loadAll(){
 
 function timePart(iso){ if(!iso) return null; const m = String(iso).match(/T(\d{2}:\d{2})/); return m ? m[1] : null; }
 
-async function loadToday(id){
+// Today (clock in/out + shift) cache per account, kept until local midnight so
+// reopening the panel shows the status instantly instead of a spinner. It is
+// stale-while-revalidate: cached value renders first, then a background fetch
+// refreshes it — so an auto clock done server-side still shows up on next load.
+const todayCache = {
+  KEY: 'talentaTodayCache',
+  _data: null,
+  _load: function(){ if (this._data) return; try { this._data = JSON.parse(localStorage.getItem(this.KEY) || '{}'); } catch (e) { this._data = {}; } },
+  _save: function(){ try { localStorage.setItem(this.KEY, JSON.stringify(this._data)); } catch (e) {} },
+  _midnight: function(){ const d = new Date(); d.setHours(24, 0, 0, 0); return d.getTime(); },
+  get: function(id){ this._load(); const e = this._data[id]; if (!e) return null; if (Date.now() > e.exp) { delete this._data[id]; this._save(); return null; } return e.v; },
+  set: function(id, v){ this._load(); this._data[id] = { v: v, exp: this._midnight() }; this._save(); },
+  clear: function(id){ this._load(); if (id == null) { this._data = {}; } else { delete this._data[id]; } this._save(); }
+};
+
+function renderToday(id, d){
   const pin = document.getElementById('pin-' + id);
   const pout = document.getElementById('pout-' + id);
   const psh = document.getElementById('pshift-' + id);
-  if (pin) { pin.className = 'punch-val na'; pin.innerHTML = '<span class="spin-sm"></span>'; }
-  if (pout) { pout.className = 'punch-val na'; pout.innerHTML = '<span class="spin-sm"></span>'; }
-  if (psh) { psh.innerHTML = '<span class="spin-sm"></span>'; }
+  const ti = timePart(d.clock_in_at), to = timePart(d.clock_out_at);
+  if (pin) {
+    if (d.clocked_in) { pin.className = 'punch-val'; pin.innerHTML = '<span class="dot dot-pos"></span>' + (ti || 'done'); }
+    else { pin.className = 'punch-val na'; pin.innerHTML = '<span class="dot dot-muted"></span>—'; }
+  }
+  if (pout) {
+    if (d.clocked_out) { pout.className = 'punch-val'; pout.innerHTML = '<span class="dot dot-pos"></span>' + (to || 'done'); }
+    else { pout.className = 'punch-val na'; pout.innerHTML = '<span class="dot dot-muted"></span>—'; }
+  }
+  if (psh) {
+    if (d.shift) { psh.innerHTML = '<span class="dot" style="background:' + shiftColor(d.shift) + '"></span>' + escapeHtml(d.shift); }
+    else { psh.innerHTML = '<span class="dot dot-muted"></span>unknown'; }
+  }
+}
+
+function todayNA(id){
+  const pin = document.getElementById('pin-' + id), pout = document.getElementById('pout-' + id), psh = document.getElementById('pshift-' + id);
+  if (pin) pin.innerHTML = '<span class="dot dot-muted"></span>n/a';
+  if (pout) pout.innerHTML = '<span class="dot dot-muted"></span>n/a';
+  if (psh) psh.innerHTML = '<span class="dot dot-muted"></span>n/a';
+}
+
+async function loadToday(id){
+  const cached = todayCache.get(id);
+  if (cached) {
+    todayStatus[id] = cached;
+    renderToday(id, cached);           // instant, no spinner
+  } else {
+    const pin = document.getElementById('pin-' + id), pout = document.getElementById('pout-' + id), psh = document.getElementById('pshift-' + id);
+    if (pin) { pin.className = 'punch-val na'; pin.innerHTML = '<span class="spin-sm"></span>'; }
+    if (pout) { pout.className = 'punch-val na'; pout.innerHTML = '<span class="spin-sm"></span>'; }
+    if (psh) { psh.innerHTML = '<span class="spin-sm"></span>'; }
+  }
+  // Always revalidate in the background and refresh the cache.
   try {
     const d = await api('/api/accounts/' + id + '/today');
     todayStatus[id] = d;
-    const ti = timePart(d.clock_in_at), to = timePart(d.clock_out_at);
-    if (pin) {
-      if (d.clocked_in) { pin.className = 'punch-val'; pin.innerHTML = '<span class="dot dot-pos"></span>' + (ti || 'done'); }
-      else { pin.className = 'punch-val na'; pin.innerHTML = '<span class="dot dot-muted"></span>—'; }
-    }
-    if (pout) {
-      if (d.clocked_out) { pout.className = 'punch-val'; pout.innerHTML = '<span class="dot dot-pos"></span>' + (to || 'done'); }
-      else { pout.className = 'punch-val na'; pout.innerHTML = '<span class="dot dot-muted"></span>—'; }
-    }
-    if (psh) {
-      if (d.shift) { psh.innerHTML = '<span class="dot" style="background:' + shiftColor(d.shift) + '"></span>' + escapeHtml(d.shift); }
-      else { psh.innerHTML = '<span class="dot dot-muted"></span>unknown'; }
-    }
+    todayCache.set(id, d);
+    renderToday(id, d);
   } catch (e) {
     delete todayStatus[id];
-    if (pin) pin.innerHTML = '<span class="dot dot-muted"></span>n/a';
-    if (pout) pout.innerHTML = '<span class="dot dot-muted"></span>n/a';
-    if (psh) psh.innerHTML = '<span class="dot dot-muted"></span>n/a';
+    if (!cached) todayNA(id);           // keep showing cache if the refresh failed
   }
 }
 
@@ -637,7 +672,7 @@ async function doClock(id, action){
   try {
     const d = await api('/api/accounts/' + id + '/' + action, {method:'POST', body: JSON.stringify({force: force})});
     toast(d.message || 'Done', d.data ? d.data.success : true);
-    loadToday(id); loadLogs();
+    todayCache.clear(id); loadToday(id); loadLogs();
   } catch (e) { toast(e.message, false); }
 }
 
