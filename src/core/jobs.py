@@ -117,7 +117,7 @@ def _notify_tomorrow_shift(account: Dict) -> None:
         logger.error(f"Error checking tomorrow's shift: {error}")
 
 
-def _run_clock(account: Dict, action: str, trigger: str) -> Dict:
+def _run_clock(account: Dict, action: str, trigger: str, force: bool = False) -> Dict:
     """
     Core clock in/out routine shared by in/out actions.
 
@@ -125,6 +125,8 @@ def _run_clock(account: Dict, action: str, trigger: str) -> Dict:
         account: Account dict.
         action: 'clockin' or 'clockout'.
         trigger: 'auto' or 'manual' (for logging/notification wording).
+        force: when True, skip the "already clocked today" guard and post anyway
+            (used by a confirmed manual double clock in/out from the panel).
 
     Returns:
         Dict: {'success': bool, 'status': 'success'|'skipped'|'failed', 'message': str}
@@ -159,26 +161,30 @@ def _run_clock(account: Dict, action: str, trigger: str) -> Dict:
         )
         return done('failed', f'Authentication failed: {error}', False)
 
-    # 3. Skip if already clocked for this action today.
-    #    Prefer the reliable Mekari API; fall back to HTML scraping if needed.
-    try:
-        status = get_attendance_status_api(account=account)
-        if status is None:
-            status = get_attendance_status(cookies)
-        already = status['has_clocked_out'] if is_out else status['has_clocked_in']
-        if already:
-            logger.info(f"⏭️  [{label}] {verb} skipped - already done today")
-            send_telegram_message(
-                f"🔔 Talenta Alert ({label})\n\n{verb} Skipped\n"
-                f"Time: {_now().strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-                f"Reason: Already {('clocked out' if is_out else 'clocked in')} today.",
-                account=account,
-            )
-            if is_out:
-                _notify_tomorrow_shift(account)
-            return done('skipped', f'Already {("clocked out" if is_out else "clocked in")} today', True)
-    except Exception as status_error:
-        logger.warning(f"⚠️  [{label}] Could not check attendance status: {status_error}")
+    # 3. Skip if already clocked for this action today, unless the caller forces
+    #    a confirmed double clock. Prefer the reliable Mekari API; fall back to
+    #    HTML scraping if needed.
+    if force:
+        logger.info(f"⚠️  [{label}] {verb} forced (double clock confirmed)")
+    else:
+        try:
+            status = get_attendance_status_api(account=account)
+            if status is None:
+                status = get_attendance_status(cookies)
+            already = status['has_clocked_out'] if is_out else status['has_clocked_in']
+            if already:
+                logger.info(f"⏭️  [{label}] {verb} skipped - already done today")
+                send_telegram_message(
+                    f"🔔 Talenta Alert ({label})\n\n{verb} Skipped\n"
+                    f"Time: {_now().strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                    f"Reason: Already {('clocked out' if is_out else 'clocked in')} today.",
+                    account=account,
+                )
+                if is_out:
+                    _notify_tomorrow_shift(account)
+                return done('skipped', f'Already {("clocked out" if is_out else "clocked in")} today', True)
+        except Exception as status_error:
+            logger.warning(f"⚠️  [{label}] Could not check attendance status: {status_error}")
 
     # 4. Perform the clock action with cookie-refresh retry on 401.
     loc = _loc(account)
@@ -239,11 +245,11 @@ def _run_clock(account: Dict, action: str, trigger: str) -> Dict:
     return done('failed', 'Exhausted retries', False)
 
 
-def clock_in_for_account(account: Dict, trigger: str = 'auto') -> Dict:
+def clock_in_for_account(account: Dict, trigger: str = 'auto', force: bool = False) -> Dict:
     """Clock in for a single account. ``trigger`` is 'auto' or 'manual'."""
-    return _run_clock(account, 'clockin', trigger)
+    return _run_clock(account, 'clockin', trigger, force=force)
 
 
-def clock_out_for_account(account: Dict, trigger: str = 'auto') -> Dict:
+def clock_out_for_account(account: Dict, trigger: str = 'auto', force: bool = False) -> Dict:
     """Clock out for a single account. ``trigger`` is 'auto' or 'manual'."""
-    return _run_clock(account, 'clockout', trigger)
+    return _run_clock(account, 'clockout', trigger, force=force)

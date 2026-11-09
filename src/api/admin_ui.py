@@ -260,6 +260,19 @@ ADMIN_HTML = r"""<!DOCTYPE html>
         .toast.ok { border-left-color: var(--pos); }
         .toast.err { border-left-color: var(--neg); }
 
+        /* confirm dialog */
+        .confirm-modal { max-width: 420px; }
+        .confirm-head { display: flex; gap: 14px; align-items: flex-start; }
+        .confirm-badge { width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: var(--raised); border: 1px solid var(--line); color: var(--text-2); }
+        .confirm-badge.warn { color: var(--accent); background: rgba(232,163,61,0.12); border-color: rgba(232,163,61,0.3); }
+        .confirm-badge.danger { color: var(--neg); background: rgba(229,72,77,0.12); border-color: rgba(229,72,77,0.3); }
+        .confirm-head h2 { font-size: 16px; font-weight: 500; margin-bottom: 6px; }
+        .confirm-msg { font-size: 14px; line-height: 20px; color: var(--text-2); white-space: pre-line; }
+        .confirm-msg b { color: var(--text); font-weight: 500; }
+        .btn-danger-solid { background: var(--neg); color: #fff; border-color: transparent; }
+        .btn-danger-solid .ic { color: #fff; }
+        .btn-danger-solid:hover { background: #d63d42; border-color: transparent; }
+
         .credit { text-align: center; font-size: 12px; color: var(--muted); padding: 24px; }
         .credit a { color: var(--text-2); text-decoration: none; }
 
@@ -406,6 +419,23 @@ ADMIN_HTML = r"""<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- Confirm dialog -->
+    <div class="overlay" id="confirmOverlay">
+        <div class="modal confirm-modal">
+            <div class="confirm-head">
+                <div class="confirm-badge" id="confirmBadge"></div>
+                <div>
+                    <h2 id="confirmTitle"></h2>
+                    <div class="confirm-msg" id="confirmMsg"></div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-quiet" id="confirmCancel" onclick="closeConfirm(false)">Cancel</button>
+                <button class="btn btn-primary" id="confirmOk" onclick="closeConfirm(true)">Confirm</button>
+            </div>
+        </div>
+    </div>
+
     <div class="toast" id="toast"></div>
 
 <script>
@@ -420,7 +450,8 @@ const ICONS = {
   pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
   trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   left: '<path d="m15 18-6-6 6-6"/>',
-  right: '<path d="m9 18 6-6-6-6"/>'
+  right: '<path d="m9 18 6-6-6-6"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'
 };
 function icon(name, size){ size = size || 16; return '<svg class="ic" width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+(ICONS[name]||'')+'</svg>'; }
 
@@ -433,12 +464,37 @@ document.getElementById('calPrevBtn').innerHTML = icon('left');
 document.getElementById('calNextBtn').innerHTML = icon('right');
 
 let ACCOUNTS = [];
+let todayStatus = {};  // account id -> latest /today result, for the double-clock guard
 
 function toast(msg, ok){
   if (ok === undefined) ok = true;
   const t = document.getElementById('toast');
   t.textContent = msg; t.className = 'toast show ' + (ok ? 'ok' : 'err');
   setTimeout(function(){ t.className = 'toast'; }, 3200);
+}
+
+// Promise-based confirm dialog that matches the UI (replaces window.confirm).
+let confirmResolve = null;
+function confirmModal(opts){
+  opts = opts || {};
+  return new Promise(function(resolve){
+    confirmResolve = resolve;
+    const badge = document.getElementById('confirmBadge');
+    badge.className = 'confirm-badge ' + (opts.variant || '');
+    badge.innerHTML = icon(opts.icon || 'alert', 18);
+    document.getElementById('confirmTitle').textContent = opts.title || 'Are you sure?';
+    document.getElementById('confirmMsg').textContent = opts.message || '';
+    const ok = document.getElementById('confirmOk');
+    ok.textContent = opts.confirmLabel || 'Confirm';
+    ok.className = 'btn ' + (opts.danger ? 'btn-danger-solid' : 'btn-primary');
+    document.getElementById('confirmOverlay').classList.add('show');
+    ok.focus();
+  });
+}
+function closeConfirm(result){
+  document.getElementById('confirmOverlay').classList.remove('show');
+  const r = confirmResolve; confirmResolve = null;
+  if (r) r(result);
 }
 
 async function api(url, opts){
@@ -505,6 +561,7 @@ async function loadToday(id){
   if (psh) { psh.innerHTML = '<span class="spin-sm"></span>'; }
   try {
     const d = await api('/api/accounts/' + id + '/today');
+    todayStatus[id] = d;
     const ti = timePart(d.clock_in_at), to = timePart(d.clock_out_at);
     if (pin) {
       if (d.clocked_in) { pin.className = 'punch-val'; pin.innerHTML = '<span class="dot dot-pos"></span>' + (ti || 'done'); }
@@ -519,6 +576,7 @@ async function loadToday(id){
       else { psh.innerHTML = '<span class="dot dot-muted"></span>unknown'; }
     }
   } catch (e) {
+    delete todayStatus[id];
     if (pin) pin.innerHTML = '<span class="dot dot-muted"></span>n/a';
     if (pout) pout.innerHTML = '<span class="dot dot-muted"></span>n/a';
     if (psh) psh.innerHTML = '<span class="dot dot-muted"></span>n/a';
@@ -546,9 +604,38 @@ async function loadLogs(){
 }
 
 async function doClock(id, action){
-  if (!confirm((action === 'clockout' ? 'Clock out' : 'Clock in') + ' now for this account?')) return;
+  const isOut = action === 'clockout';
+  const verb = isOut ? 'Clock out' : 'Clock in';
+  const acc = ACCOUNTS.find(function(x){ return x.id === id; });
+  const name = acc ? acc.label : ('#' + id);
+  const t = todayStatus[id] || {};
+  const already = isOut ? t.clocked_out : t.clocked_in;
+  const at = timePart(isOut ? t.clock_out_at : t.clock_in_at);
+
+  let force = false, ok;
+  if (already) {
+    // Already clocked today — warn and ask to confirm a double clock.
+    force = true;
+    ok = await confirmModal({
+      title: 'Double ' + verb.toLowerCase() + '?',
+      message: name + ' already clocked ' + (isOut ? 'out' : 'in') + ' today'
+             + (at ? (' at ' + at) : '') + '.\n\nThis will record a duplicate '
+             + verb.toLowerCase() + '. Continue anyway?',
+      confirmLabel: verb + ' again',
+      variant: 'warn', icon: 'alert'
+    });
+  } else {
+    ok = await confirmModal({
+      title: verb + ' now?',
+      message: 'Trigger a manual ' + verb.toLowerCase() + ' for ' + name + '.',
+      confirmLabel: verb,
+      icon: isOut ? 'logout' : 'login'
+    });
+  }
+  if (!ok) return;
+
   try {
-    const d = await api('/api/accounts/' + id + '/' + action, {method:'POST'});
+    const d = await api('/api/accounts/' + id + '/' + action, {method:'POST', body: JSON.stringify({force: force})});
     toast(d.message || 'Done', d.data ? d.data.success : true);
     loadToday(id); loadLogs();
   } catch (e) { toast(e.message, false); }
@@ -564,7 +651,12 @@ async function toggleEnabled(id, enabled){
 
 async function delAccount(id){
   const a = ACCOUNTS.find(function(x){ return x.id === id; });
-  if (!confirm('Delete account "' + (a ? a.label : id) + '"? This cannot be undone.')) return;
+  const ok = await confirmModal({
+    title: 'Delete account?',
+    message: 'Delete "' + (a ? a.label : id) + '"? This cannot be undone.',
+    confirmLabel: 'Delete', danger: true, variant: 'danger', icon: 'trash'
+  });
+  if (!ok) return;
   try { await api('/api/accounts/' + id, {method:'DELETE'}); scheduleCache.clearAccount(id); toast('Account deleted'); loadAll(); }
   catch (e) { toast(e.message, false); }
 }
@@ -728,9 +820,13 @@ async function renderCal(){
   body.innerHTML = html;
 }
 
+document.getElementById('confirmOverlay').addEventListener('click', function(e){ if (e.target.id === 'confirmOverlay') closeConfirm(false); });
 document.getElementById('formOverlay').addEventListener('click', function(e){ if (e.target.id === 'formOverlay') closeForm(); });
 document.getElementById('calOverlay').addEventListener('click', function(e){ if (e.target.id === 'calOverlay') closeCal(); });
-document.addEventListener('keydown', function(e){ if (e.key === 'Escape') { closeForm(); closeCal(); } });
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape') { if (confirmResolve) closeConfirm(false); closeForm(); closeCal(); }
+  else if (e.key === 'Enter' && confirmResolve) { e.preventDefault(); closeConfirm(true); }
+});
 
 loadAll();
 </script>
