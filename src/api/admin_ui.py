@@ -559,7 +559,7 @@ function timePart(iso){ if(!iso) return null; const m = String(iso).match(/T(\d{
 // stale-while-revalidate: cached value renders first, then a background fetch
 // refreshes it — so an auto clock done server-side still shows up on next load.
 const todayCache = {
-  KEY: 'talentaTodayCache',
+  KEY: 'talentaTodayCacheV2',
   _data: null,
   _load: function(){ if (this._data) return; try { this._data = JSON.parse(localStorage.getItem(this.KEY) || '{}'); } catch (e) { this._data = {}; } },
   _save: function(){ try { localStorage.setItem(this.KEY, JSON.stringify(this._data)); } catch (e) {} },
@@ -777,7 +777,7 @@ const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 // Per-month schedule cache, persisted in localStorage. A month that has been
 // opened is kept for one day so switching back to it does not re-fetch.
 const scheduleCache = {
-  KEY: 'talentaScheduleCache',
+  KEY: 'talentaScheduleCacheV2',
   TTL: 24 * 60 * 60 * 1000,
   _data: null,
   _load: function(){
@@ -826,7 +826,13 @@ async function renderCal(){
   const first = new Date(y, m, 1), last = new Date(y, m+1, 0);
   const start = new Date(first); start.setDate(start.getDate() - start.getDay());
   const end = new Date(last); end.setDate(end.getDate() + (6 - end.getDay()));
-  const cacheKey = calAccountId + ':' + fmt(start) + '_' + fmt(end);
+  // Bind the cache entry to the account's owner (organisation_user_id) so a
+  // cached schedule can only ever render for the account it actually belongs to.
+  // If the account's identity changes (e.g. a corrected org_user_id), the key
+  // changes and the stale entry is abandoned.
+  const calAcc = ACCOUNTS.find(function(x){ return x.id === calAccountId; });
+  const owner = (calAcc && calAcc.mekari_org_user_id) ? calAcc.mekari_org_user_id : 'na';
+  const cacheKey = calAccountId + ':' + owner + ':' + fmt(start) + '_' + fmt(end);
   let map = {};
   const cached = scheduleCache.get(cacheKey);
   if (cached) {
