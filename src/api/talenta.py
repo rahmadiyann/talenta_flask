@@ -54,10 +54,13 @@ def _resolve_creds(account: Optional[Dict] = None) -> Dict[str, str]:
     Returns a dict with keys: org_id, org_user_id, bearer_token, email, password.
     """
     if account:
+        # Never fall back to the env/config values for a real account — those
+        # belong to the legacy single account and would make one account read
+        # another's schedule (same org_user_id → same data).
         return {
-            'org_id': account.get('mekari_org_id') or MEKARI_ORGANISATION_ID,
-            'org_user_id': account.get('mekari_org_user_id') or MEKARI_ORGANISATION_USER_ID,
-            'bearer_token': account.get('bearer_token') or MEKARI_BEARER_TOKEN,
+            'org_id': account.get('mekari_org_id') or '',
+            'org_user_id': account.get('mekari_org_user_id') or '',
+            'bearer_token': account.get('bearer_token') or '',
             'email': account.get('email') or '',
             'password': account.get('password') or '',
         }
@@ -583,6 +586,43 @@ def _calculate_api_start_date(target_date: datetime) -> str:
     return f"{api_year}-{api_month:02d}-01"
 
 
+def _resolve_org_user_id(account: Dict, creds: Dict) -> Optional[str]:
+    """
+    Return the account's real organisation_user_id, detected from its own login
+    session (cached alongside the bearer token). Falls back to the stored value
+    if detection is unavailable, and self-heals the stored value when it differs.
+    """
+    email = creds.get('email')
+    if not email:
+        return creds.get('org_user_id')
+
+    def _cached():
+        with _cache_lock:
+            entry = _BEARER_CACHE.get(email)
+            if entry and entry.get('exp', 0) > time.time():
+                return entry.get('org_user_id')
+        return None
+
+    detected = _cached()
+    if not detected:
+        _get_bearer_token_from_session(account=account)  # warms bearer + org_user cache
+        detected = _cached()
+
+    if not detected:
+        return creds.get('org_user_id')
+
+    # Self-heal the stored value so the UI and future lookups are correct.
+    if account.get('id') and str(account.get('mekari_org_user_id') or '') != str(detected):
+        try:
+            from src.core import accounts as _accounts
+            _accounts.update_account(account['id'], {'mekari_org_user_id': str(detected)})
+            logger.info(f"🔧 Corrected organisation_user_id for '{account.get('label')}' -> {detected}")
+        except Exception as error:
+            logger.debug(f"Could not persist detected org_user_id: {error}")
+
+    return str(detected)
+
+
 def get_schedule(start_date: Optional[str] = None, cookies: Optional[str] = None,
                  target_date: Optional[datetime] = None,
                  account: Optional[Dict] = None) -> Optional[Dict]:
@@ -606,8 +646,16 @@ def get_schedule(start_date: Optional[str] = None, cookies: Optional[str] = None
     """
     creds = _resolve_creds(account)
 
+    # For a real account, always use its own organisation_user_id (auto-detected
+    # from its login) rather than whatever was typed/copied, so one account never
+    # reads another's schedule. Works even if the stored id was blank or wrong.
+    if account:
+        detected = _resolve_org_user_id(account, creds)
+        if detected:
+            creds['org_user_id'] = detected
+
     if not creds['org_id'] or not creds['org_user_id']:
-        logger.warning("Schedule check not configured. Set MEKARI_ORGANISATION_ID and MEKARI_ORGANISATION_USER_ID.")
+        logger.warning("Schedule check not configured. Set the Mekari Organisation ID for this account.")
         return None
 
     # Calculate start_date based on target_date if not specified
@@ -688,6 +736,37 @@ def _extract_bearer_token_from_session(session_token: str) -> Optional[str]:
         return None
     except Exception:
         return None
+
+
+def _fetch_live_attendance_id(session, account: Optional[Dict]) -> Optional[str]:
+    """
+    Read the logged-in user's own organisation_user_id from the live-attendance
+    endpoint (its ``data.id`` is the organisation_user_id of whoever is signed in).
+
+    Uses the already-authenticated ``session``. Returns the id as a string, or
+    None if it cannot be determined.
+    """
+    try:
+        lat = (account or {}).get('latitude') or '-6.0'
+        long = (account or {}).get('longitude') or '107.0'
+        response = session.get(
+            'https://hr.talenta.co/api/web/live-attendance',
+            params={'latitude': lat, 'longitude': long},
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Accept': 'application/json, text/plain, */*',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Referer': 'https://hr.talenta.co/live-attendance',
+            },
+            timeout=15,
+        )
+        if response.ok:
+            uid = (response.json().get('data') or {}).get('id')
+            if uid:
+                return str(uid)
+    except Exception as error:
+        logger.debug(f"Could not detect organisation_user_id: {error}")
+    return None
 
 
 def _get_bearer_token_from_session(cookies: Optional[str] = None,
@@ -779,8 +858,16 @@ def _get_bearer_token_from_session(cookies: Optional[str] = None,
         bearer_token = _extract_bearer_token_from_session(session_token)
         if bearer_token:
             logger.debug("Successfully extracted Bearer token from session")
+            # While we hold this logged-in session, also detect the account's own
+            # organisation_user_id so schedule lookups never borrow another
+            # account's id (a wrong/copied value would read someone else's data).
+            org_user_id = _fetch_live_attendance_id(session, account)
             with _cache_lock:
-                _BEARER_CACHE[EMAIL] = {'token': bearer_token, 'exp': time.time() + _BEARER_TTL}
+                _BEARER_CACHE[EMAIL] = {
+                    'token': bearer_token,
+                    'org_user_id': org_user_id,
+                    'exp': time.time() + _BEARER_TTL,
+                }
             return bearer_token
 
         return None
