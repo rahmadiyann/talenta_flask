@@ -777,7 +777,7 @@ const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 // Per-month schedule cache, persisted in localStorage. A month that has been
 // opened is kept for one day so switching back to it does not re-fetch.
 const scheduleCache = {
-  KEY: 'talentaScheduleCacheV2',
+  KEY: 'talentaScheduleCacheV3',
   TTL: 24 * 60 * 60 * 1000,
   _data: null,
   _load: function(){
@@ -841,7 +841,12 @@ async function renderCal(){
     try {
       const d = await api('/api/accounts/' + calAccountId + '/schedule?start_date=' + fmt(start) + '&end_date=' + fmt(end));
       (d.schedule || []).forEach(function(it){ map[it.date] = it; });
-      scheduleCache.set(cacheKey, map);
+      // Only cache when we actually got shift data. A transient upstream hiccup
+      // can return "success" with every shift null — caching that would show an
+      // empty calendar for up to a day even after the data is back.
+      if ((d.schedule || []).some(function(it){ return it.shift; })) {
+        scheduleCache.set(cacheKey, map);
+      }
     } catch (e) {
       body.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '<br><br>Set the Mekari Organisation IDs on this account to enable the schedule viewer.</div>';
       return;
