@@ -117,6 +117,26 @@ def _notify_tomorrow_shift(account: Dict) -> None:
         logger.error(f"Error checking tomorrow's shift: {error}")
 
 
+def _alert_failure(account: Dict, verb: str, reason: str, trigger: str) -> None:
+    """
+    Send a Telegram alert for a failed clock in/out, including the reason/error.
+    Goes to the account's own Telegram (falling back to the global bot/chat).
+    Never raises — alerting must not mask the original failure.
+    """
+    try:
+        label = account.get('label', f"#{account.get('id')}")
+        send_telegram_message(
+            f"🚨 Talenta {verb} FAILED\n\n"
+            f"Account: {label}\n"
+            f"Time: {_now().strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+            f"Trigger: {trigger}\n"
+            f"Reason: {reason}",
+            account=account,
+        )
+    except Exception as error:
+        logger.warning(f"Could not send failure alert: {error}")
+
+
 def _run_clock(account: Dict, action: str, trigger: str, force: bool = False) -> Dict:
     """
     Core clock in/out routine shared by in/out actions.
@@ -130,6 +150,8 @@ def _run_clock(account: Dict, action: str, trigger: str, force: bool = False) ->
 
     Returns:
         Dict: {'success': bool, 'status': 'success'|'skipped'|'failed', 'message': str}
+
+    Any failure (for any reason) triggers a Telegram alert with the error.
     """
     is_out = action == 'clockout'
     label = account.get('label', f"#{account.get('id')}")
@@ -137,8 +159,20 @@ def _run_clock(account: Dict, action: str, trigger: str, force: bool = False) ->
 
     def done(status: str, message: str, success: bool) -> Dict:
         accounts.log_action(account, action, status, message, trigger)
+        # Single, central alert point: every failed clock notifies Telegram.
+        if status == 'failed':
+            _alert_failure(account, verb, message, trigger)
         return {'success': success, 'status': status, 'message': message}
 
+    try:
+        return _run_clock_inner(account, action, trigger, force, is_out, label, verb, done)
+    except Exception as error:
+        # Catch-all so no failure reason ever goes unalerted.
+        logger.error(f"❌ [{label}] {verb} unexpected error: {error}")
+        return done('failed', f'Unexpected error: {error}', False)
+
+
+def _run_clock_inner(account, action, trigger, force, is_out, label, verb, done) -> Dict:
     # 1. Shift gating only applies to automatic runs; a manual press is explicit intent.
     if trigger == 'auto':
         gate = _shift_allows(account, action)
@@ -153,12 +187,6 @@ def _run_clock(account: Dict, action: str, trigger: str, force: bool = False) ->
         cookies = auth.get_cookies_for_account(account)
     except Exception as error:
         logger.error(f"❌ [{label}] Auth failed: {error}")
-        send_telegram_message(
-            f"🚨 Talenta {verb} Failed ({label})\n\n"
-            f"Time: {_now().strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-            f"Reason: Authentication failed\nError: {error}",
-            account=account,
-        )
         return done('failed', f'Authentication failed: {error}', False)
 
     # 3. Skip if already clocked for this action today, unless the caller forces
@@ -210,7 +238,11 @@ def _run_clock(account: Dict, action: str, trigger: str, force: bool = False) ->
                 desc='co' if is_out else 'ci',
             )
 
-            ok = (not isinstance(result, dict)) or result.get('status') == 200
+            # Strict success: a real clock returns JSON with status 200. A dead/
+            # moved endpoint can return an HTML page or a redirect with HTTP 200 —
+            # treat anything that is not a proper JSON success as a failure so it
+            # gets alerted instead of silently passing.
+            ok = isinstance(result, dict) and result.get('status') == 200
             if ok:
                 logger.info(f"✅ [{label}] {verb} successful!")
                 # Record our own clock event — the Mekari summary API lags, so
@@ -225,8 +257,8 @@ def _run_clock(account: Dict, action: str, trigger: str, force: bool = False) ->
                     _notify_tomorrow_shift(account)
                 return done('success', f'{verb} successful', True)
 
-            # dict result without status 200 -> treat as failure
-            raise Exception(f'Unexpected response: {result}')
+            # Not a proper JSON success -> treat as failure (truncate noisy bodies).
+            raise Exception(f'Unexpected response (not a success): {str(result)[:200]}')
 
         except Exception as error:
             error_str = str(error)
@@ -238,22 +270,10 @@ def _run_clock(account: Dict, action: str, trigger: str, force: bool = False) ->
                     continue
                 except Exception as auth_error:
                     logger.error(f"❌ [{label}] Cookie refresh failed: {auth_error}")
-                    send_telegram_message(
-                        f"🚨 Talenta {verb} Failed ({label})\n\n"
-                        f"Time: {_now().strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-                        f"Reason: Auth refresh failed\nError: {auth_error}",
-                        account=account,
-                    )
                     return done('failed', f'Auth refresh failed: {auth_error}', False)
             else:
                 logger.error(f"❌ [{label}] {verb} failed: {error}")
-                send_telegram_message(
-                    f"🚨 Talenta {verb} Failed ({label})\n\n"
-                    f"Time: {_now().strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-                    f"Attempts: {attempt + 1}/{MAX_RETRIES}\nError: {error}",
-                    account=account,
-                )
-                return done('failed', str(error), False)
+                return done('failed', f'{error} (after {attempt + 1}/{MAX_RETRIES} attempts)', False)
 
     return done('failed', 'Exhausted retries', False)
 
