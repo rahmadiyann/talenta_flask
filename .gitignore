@@ -45,3 +45,8 @@ data/
 .DS_Store
 Thumbs.db
 *:Zone.Identifier
+
+# MITM capture tool (on-demand): venv, CA + private key, and captured tokens
+mitm/.venv/
+mitm/.mitmproxy/
+mitm/state/
